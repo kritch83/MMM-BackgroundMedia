@@ -1,0 +1,24 @@
+{
+	"name": "mmm-backgroundmedia",
+	"version": "1.0.0",
+	"description": "MagicMirror² module: full-screen background slideshow of photos and videos with crossfade, auto-transcoding for Raspberry Pi, and MMM-KeyBindings control.",
+	"main": "MMM-BackgroundMedia.js",
+	"scripts": {
+		"test": "node --test \"test/*.test.js\""
+	},
+	"keywords": [
+		"magicmirror",
+		"magicmirror2",
+		"slideshow",
+		"background",
+		"video",
+		"raspberry pi"
+	],
+	"license": "MIT",
+	"engines": {
+		"node": ">=22"
+	},
+	"dependencies": {
+		"exifr": "^7.1.3"
+	}
+}

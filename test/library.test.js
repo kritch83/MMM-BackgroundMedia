@@ -1,0 +1,116 @@
+const { test } = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { scan, parseExtensions, expandPath } = require("../lib/scanner");
+const { buildFolders } = require("../lib/folders");
+const { Transcoder, buildArgs, targetSize, doubleRate, cacheKey } = require("../lib/transcoder");
+const { PROFILES } = require("../lib/profiles");
+
+const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "bgm-test-"));
+const touch = (root, rel) => {
+	const file = path.join(root, rel);
+	fs.mkdirSync(path.dirname(file), { recursive: true });
+	fs.writeFileSync(file, "x");
+	return file;
+};
+
+test("scanner filters extensions, skips excluded and hidden folders, respects recursive", () => {
+	const root = tmp();
+	["a.jpg", "b.PNG", "c.mov", "notes.txt", "Trip/d.mpeg", "Trip/Day 2/e.jpeg", "@eaDir/thumb.jpg", ".hidden/f.jpg"].forEach((f) => touch(root, f));
+	const opts = { mediaPaths: [root], excludePaths: ["@eaDir"], extensions: "jpg,jpeg,png,mov,mpeg" };
+
+	const all = scan({ ...opts, recursive: true }).map((f) => path.relative(root, f.path)).sort();
+	assert.deepEqual(all, ["Trip/Day 2/e.jpeg", "Trip/d.mpeg", "a.jpg", "b.PNG", "c.mov"]);
+
+	const flat = scan({ ...opts, recursive: false }).map((f) => path.basename(f.path)).sort();
+	assert.deepEqual(flat, ["a.jpg", "b.PNG", "c.mov"]);
+
+	const types = Object.fromEntries(scan({ ...opts, recursive: true }).map((f) => [path.basename(f.path), f.type]));
+	assert.equal(types["c.mov"], "video");
+	assert.equal(types["d.mpeg"], "video");
+	assert.equal(types["b.PNG"], "image");
+});
+
+test("scanner reports missing paths instead of throwing", () => {
+	const errors = [];
+	const files = scan({ mediaPaths: ["/definitely/not/here"], extensions: "jpg", onError: (p) => errors.push(p) });
+	assert.deepEqual(files, []);
+	assert.equal(errors.length, 1);
+});
+
+test("parseExtensions and expandPath", () => {
+	assert.deepEqual([...parseExtensions(" .JPG, png ,")], ["jpg", "png"]);
+	assert.equal(expandPath("~/Pictures", "/mm"), path.join(os.homedir(), "Pictures"));
+	assert.equal(expandPath("media", "/mm"), "/mm/media");
+});
+
+test("folders: single root lists subfolders to the given depth", () => {
+	const root = "/m";
+	const files = ["/m/top.jpg", "/m/Family/a.jpg", "/m/Trip 10/b.jpg", "/m/Trip 2/c.jpg", "/m/Trip 2/Day 1/d.jpg"].map((p) => ({ path: p }));
+	const { folders, fileDirs } = buildFolders([root], files, 2);
+	assert.deepEqual(folders.map((f) => [f.label, f.depth, f.count]), [
+		["Family", 0, 1],
+		["Trip 2", 0, 2],
+		["Trip 2 / Day 1", 1, 1],
+		["Trip 10", 0, 1]
+	]);
+	assert.deepEqual(fileDirs.get("/m/top.jpg"), []);
+	const day1 = fileDirs.get("/m/Trip 2/Day 1/d.jpg").map((i) => folders[i].label);
+	assert.deepEqual(day1, ["Trip 2", "Trip 2 / Day 1"]);
+
+	const shallow = buildFolders([root], files, 1).folders.map((f) => f.label);
+	assert.deepEqual(shallow, ["Family", "Trip 2", "Trip 10"]);
+});
+
+test("folders: several roots are folders themselves", () => {
+	const files = ["/photos/x.jpg", "/photos/Pets/y.jpg", "/videos/z.mov"].map((p) => ({ path: p }));
+	const { folders, fileDirs } = buildFolders(["/photos", "/videos"], files, 1);
+	assert.deepEqual(folders.map((f) => [f.label, f.depth, f.count]), [
+		["photos", 0, 2],
+		["photos / Pets", 1, 1],
+		["videos", 0, 1]
+	]);
+	assert.deepEqual(fileDirs.get("/photos/Pets/y.jpg").map((i) => folders[i].id), ["/photos", "/photos/Pets"]);
+});
+
+test("targetSize keeps aspect, fits the short side, rounds to even", () => {
+	assert.deepEqual(targetSize({ width: 3840, height: 2160 }, 1080), { width: 1920, height: 1080 });
+	assert.deepEqual(targetSize({ width: 2160, height: 3840 }, 1080), { width: 1080, height: 1920 });
+	assert.deepEqual(targetSize({ width: 853, height: 480 }, 1080), { width: 854, height: 480 });
+});
+
+test("buildArgs for libx264 and the Pi hardware encoder", () => {
+	const info = { width: 853, height: 480, fps: 59.94, interlaced: true };
+	const x264 = buildArgs({ input: "in.mpg", output: "out.part", info, profile: PROFILES.rpi4, encoder: "libx264" });
+	assert.ok(x264.includes("-an"));
+	assert.equal(x264[x264.indexOf("-vf") + 1], "yadif,scale=854:480,setsar=1,fps=30,format=yuv420p");
+	assert.equal(x264[x264.indexOf("-bufsize") + 1], "10M");
+	assert.deepEqual(x264.slice(-3), ["-f", "mp4", "out.part"]);
+	const hw = buildArgs({ input: "in.mov", output: "o", info: { width: 1920, height: 1080, fps: 30 }, profile: PROFILES.rpi4, encoder: "h264_v4l2m2m" });
+	assert.equal(hw[hw.indexOf("-c:v") + 1], "h264_v4l2m2m");
+	assert.equal(hw[hw.indexOf("-b:v") + 1], "5M");
+	assert.ok(!hw.includes("-crf"));
+	assert.equal(doubleRate("2.5M"), "5M");
+});
+
+test("cacheKey changes with file and profile", () => {
+	const file = { path: "/a.mov", size: 10, mtime: 1 };
+	const a = cacheKey(file, PROFILES.rpi4);
+	assert.match(a, /^[0-9a-f]{40}$/);
+	assert.notEqual(a, cacheKey({ ...file, mtime: 2 }, PROFILES.rpi4));
+	assert.notEqual(a, cacheKey(file, PROFILES.rpi5));
+	assert.equal(a, cacheKey(file, { ...PROFILES.rpi4, encoder: "libx264" }), "encoder fallback keeps the cache");
+});
+
+test("transcoder cleanup removes orphans and partial files only", () => {
+	const dir = tmp();
+	const log = { info () {}, warn () {}, error () {} };
+	const t = new Transcoder({ ffmpegPath: "ffmpeg", cacheDir: dir, profile: PROFILES.rpi4, log });
+	const keep = "a".repeat(40);
+	const orphan = "b".repeat(40);
+	for (const name of [`${keep}.mp4`, `${keep}.mp4.part`, `${orphan}.mp4`, "state.json"]) fs.writeFileSync(path.join(dir, name), "");
+	t.cleanup(new Set([keep]));
+	assert.deepEqual(fs.readdirSync(dir).sort(), [`${keep}.mp4`, "state.json"]);
+});
