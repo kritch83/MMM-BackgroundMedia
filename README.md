@@ -51,8 +51,11 @@ Minimal `config/config.js` entry:
 | `sortDescending` | `false` | Reverse `name` / `date` order. |
 | `imageDuration` | `15000` | How long each photo shows, in ms. |
 | `maxVideoDuration` | `0` | Cut videos off after this many ms. `0` = play the whole video. |
-| `shortVideoLength` | `10000` | Videos shorter than this many ms... |
-| `shortVideoDelay` | `3000` | ...hold their last frame this many ms before moving on. Pausing freezes the hold and replay plays the clip again. `0` = no hold. |
+| `shortVideoLength` | `10000` | Videos shorter than this many ms count as "short" for the two options below. |
+| `videoSlowdown` | `"short"` | Which videos ease to a stop at the end: `"off"`, `"short"`, or `"all"`. See [Video endings](#video-endings). |
+| `slowdownDuration` | `1000` | How long the slow-down takes on screen, in ms. |
+| `videoFreeze` | `"short"` | Which videos then hold their last frame: `"off"`, `"short"`, or `"all"`. |
+| `freezeDuration` | `3000` | How long the hold lasts, in ms. Pausing freezes it, and replay plays the clip again. The old name `shortVideoDelay` still works. |
 | `transitionDuration` | `1500` | Crossfade length in ms. `0` = hard cut. |
 | `fit` | `"contain-blur"` | `"contain-blur"`: whole picture, empty space filled with a blurred copy. `"contain"`: whole picture, black bars. `"cover"`: fill the screen, crop edges. |
 | `position` | `"center"` | CSS `object-position` for the media, e.g. `"top"`. |
@@ -60,9 +63,11 @@ Minimal `config/config.js` entry:
 | `infoLocation` | `"bottomRight"` | `bottomRight`, `bottomLeft`, `topRight`, `topLeft`. |
 | `infoFields` | `["name", "date"]` | Any of `name`, `date`, `folder`. |
 | `dateFormat` | `{ dateStyle: "long" }` | [`Intl.DateTimeFormat` options](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Intl/DateTimeFormat/DateTimeFormat#options). Uses the mirror's `language`. |
-| `showProgressBar` | `true` | Thin bar at the bottom showing time left on the current item. |
+| `showProgressBar` | `true` | Thin bar at the bottom showing time left on the current item. For videos it covers the slow-down and freeze too, so it reaches the end just as the next item starts. |
 | `showIndicator` | `true` | Briefly show an icon (⏭ ⏮ ⏸ ▶ ↻) when a command is received. |
 | `showGradient` | `true` | Darken the edges so other modules stay readable. |
+| `showConversionStatus` | `true` | While videos are being converted, show a small card with the file name, "Converting 2 of 5", and percent done. |
+| `conversionStatusLocation` | `"bottomLeft"` | `bottomLeft`, `bottomRight`, `topLeft`, `topRight`. |
 | `gradientDirection` | `"vertical"` | `vertical`, `horizontal`, `both`, or `radial`. Stops are set with `gradient`, `horizontalGradient` and `radialGradient`; the defaults match MMM-BackgroundSlideshow. |
 | `folderDepth` | `1` | How many subfolder levels the folder picker lists below each media folder. |
 | `rememberFolderSelection` | `true` | Keep the folder selection across restarts. |
@@ -86,7 +91,19 @@ MagicMirror's Electron browser decodes video in software on both Pis. Any video 
 
 `"auto"` reads `/proc/device-tree/model`. Older Pis use the `rpi4` limits, and anything that isn't a Pi uses `generic`. The log shows which profile was picked.
 
-**First run:** conversion happens in the background, one file at a time, at low priority. Photos and already-playable videos show immediately, and converted videos join the slideshow as each finishes. Conversion on a Pi is slow; 4K iPhone (HEVC) clips can take several times their own length. Results are cached, keyed to the file and the profile, so this only happens once per file. Cached files for deleted videos are cleaned up on rescan. If the browser fails on a video that looked playable, that file is converted automatically.
+**First run:** conversion happens in the background, one file at a time, at low priority. Photos and already-playable videos show immediately, and converted videos join the slideshow as each finishes. Conversion on a Pi is slow; 4K iPhone (HEVC) clips can take several times their own length. Results are cached, keyed to the file and to the output's size and frame rate, so each file is only converted once. Moving to a Pi 5 reuses the cache; only clips above 30 fps are re-converted, to keep their full frame rate. Cached files for deleted videos are cleaned up on rescan. If the browser fails on a video that looked playable, that file is converted automatically.
+
+### Video endings
+
+At the end of a video it can ease to a stop and then rest on its last frame before the next item:
+
+```js
+videoSlowdown: "short", videoFreeze: "short", // default: clips under 10 s slow down and freeze
+videoSlowdown: "off",                         // no slow-down; short clips still freeze
+videoSlowdown: "all", videoFreeze: "all",     // every video slows down and freezes
+```
+
+The slow-down is an even "braking" curve. A 1 s `slowdownDuration` plays the last half-second of footage over one second, stopping exactly on the last frame. Pausing during it holds the frame, and replay restarts at normal speed.
 
 ## Keys (MMM-KeyBindings)
 

@@ -5,7 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { scan, parseExtensions, expandPath } = require("../lib/scanner");
 const { buildFolders } = require("../lib/folders");
-const { Transcoder, buildArgs, targetSize, doubleRate, cacheKey } = require("../lib/transcoder");
+const { Transcoder, buildArgs, targetSize, doubleRate, cacheKey, progressPercent } = require("../lib/transcoder");
 const { PROFILES } = require("../lib/profiles");
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "bgm-test-"));
@@ -85,6 +85,7 @@ test("buildArgs for libx264 and the Pi hardware encoder", () => {
 	const info = { width: 853, height: 480, fps: 59.94, interlaced: true };
 	const x264 = buildArgs({ input: "in.mpg", output: "out.part", info, profile: PROFILES.rpi4, encoder: "libx264" });
 	assert.ok(x264.includes("-an"));
+	assert.equal(x264[x264.indexOf("-progress") + 1], "pipe:1");
 	assert.equal(x264[x264.indexOf("-vf") + 1], "yadif,scale=854:480,setsar=1,fps=30,format=yuv420p");
 	assert.equal(x264[x264.indexOf("-bufsize") + 1], "10M");
 	assert.deepEqual(x264.slice(-3), ["-f", "mp4", "out.part"]);
@@ -95,13 +96,17 @@ test("buildArgs for libx264 and the Pi hardware encoder", () => {
 	assert.equal(doubleRate("2.5M"), "5M");
 });
 
-test("cacheKey changes with file and profile", () => {
+test("cacheKey follows the output, so a Pi 4 cache carries over to a Pi 5", () => {
 	const file = { path: "/a.mov", size: 10, mtime: 1 };
-	const a = cacheKey(file, PROFILES.rpi4);
+	const hevc30 = { width: 3840, height: 2160, fps: 30 };
+	const a = cacheKey(file, hevc30, PROFILES.rpi4);
 	assert.match(a, /^[0-9a-f]{40}$/);
-	assert.notEqual(a, cacheKey({ ...file, mtime: 2 }, PROFILES.rpi4));
-	assert.notEqual(a, cacheKey(file, PROFILES.rpi5));
-	assert.equal(a, cacheKey(file, { ...PROFILES.rpi4, encoder: "libx264" }), "encoder fallback keeps the cache");
+	assert.notEqual(a, cacheKey({ ...file, mtime: 2 }, hevc30, PROFILES.rpi4), "file changed");
+	assert.equal(a, cacheKey(file, hevc30, PROFILES.rpi5), "same 1080p30 output on both Pis");
+	assert.equal(a, cacheKey(file, hevc30, { ...PROFILES.rpi4, encoder: "libx264", bitrate: "4M" }), "encoder/bitrate don't matter");
+	const sixty = { width: 1920, height: 1080, fps: 60 };
+	assert.notEqual(cacheKey(file, sixty, PROFILES.rpi4), cacheKey(file, sixty, PROFILES.rpi5), "Pi 5 keeps 60 fps, Pi 4 halves it");
+	assert.notEqual(a, cacheKey(file, hevc30, PROFILES.generic), "generic keeps 4K");
 });
 
 test("transcoder cleanup removes orphans and partial files only", () => {
@@ -113,4 +118,32 @@ test("transcoder cleanup removes orphans and partial files only", () => {
 	for (const name of [`${keep}.mp4`, `${keep}.mp4.part`, `${orphan}.mp4`, "state.json"]) fs.writeFileSync(path.join(dir, name), "");
 	t.cleanup(new Set([keep]));
 	assert.deepEqual(fs.readdirSync(dir).sort(), [`${keep}.mp4`, "state.json"]);
+});
+
+test("progressPercent reads the latest out_time", () => {
+	assert.equal(progressPercent("frame=10\nout_time_us=2500000\nprogress=continue\nout_time_us=5000000", 10), 50);
+	assert.equal(progressPercent("out_time_us=N/A\nprogress=continue", 10), null);
+	assert.equal(progressPercent("out_time_us=99000000", 10), 100);
+	assert.equal(progressPercent("out_time_us=1000000", 0), null);
+});
+
+test("transcoder reports file, position in batch, percent, then null", async () => {
+	const dir = tmp();
+	// Stand-in for ffmpeg: prints progress, then writes the output (last argument).
+	const fake = path.join(dir, "fake-ffmpeg.sh");
+	fs.writeFileSync(fake, "#!/bin/sh\nfor last; do :; done\nprintf 'out_time_us=N/A\\nprogress=continue\\n'\nsleep 0.05\nprintf 'out_time_us=2000000\\nprogress=end\\n'\n: > \"$last\"\n");
+	fs.chmodSync(fake, 0o755);
+	const statuses = [];
+	const log = { info () {}, warn () {}, error () {} };
+	const profile = { ...PROFILES.rpi5 };
+	const t = new Transcoder({ ffmpegPath: fake, cacheDir: path.join(dir, "cache"), profile, log, onStatus: (s) => statuses.push(s) });
+	const info = { width: 1920, height: 1080, fps: 30, duration: 4 };
+	await Promise.all([t.enqueue("a".repeat(40), "/m/one.mov", info), t.enqueue("b".repeat(40), "/m/two.mpeg", info)]);
+
+	assert.equal(statuses.at(-1), null, "hidden when the queue is empty");
+	const one = statuses.filter((s) => s && s.name === "one.mov");
+	const two = statuses.filter((s) => s && s.name === "two.mpeg");
+	assert.deepEqual(one.map((s) => s.percent), [0, 50]);
+	assert.deepEqual(two.map((s) => [s.index, s.total, s.percent]), [[2, 2, 0], [2, 2, 50]]);
+	assert.ok(fs.existsSync(t.outputPath("b".repeat(40))));
 });

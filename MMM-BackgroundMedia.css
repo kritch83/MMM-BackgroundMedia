@@ -234,3 +234,65 @@
   color: #888;
   font-size: 0.75em;
 }
+
+/* Converting-videos card */
+.bgm-convert {
+  position: absolute;
+  width: 15em;
+  padding: 0.6em 0.8em;
+  border-radius: 0.6em;
+  background: rgb(0 0 0 / 60%);
+  color: #e6e6e6;
+  font-size: var(--font-size-xsmall, 0.75rem);
+  line-height: 1.4;
+  opacity: 0;
+  transition: opacity 0.5s;
+}
+
+.bgm-convert.bgm-show {
+  opacity: 1;
+}
+
+.bgm-convert-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+}
+
+.bgm-convert-percent {
+  margin-left: auto;
+}
+
+.bgm-convert-name {
+  margin: 0.2em 0 0.4em;
+  color: #a8a8a8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bgm-convert-track {
+  height: 3px;
+  border-radius: 2px;
+  background: rgb(255 255 255 / 18%);
+  overflow: hidden;
+}
+
+/* transform (not width) keeps the animation on the GPU compositor */
+.bgm-convert-bar {
+  height: 100%;
+  background: #e6e6e6;
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 1s linear;
+}
+
+/* Don't keep spinning while hidden */
+.bgm-convert:not(.bgm-show) .fa-spin {
+  animation: none;
+}
+
+.bgm-convert-bottomRight { right: 20px; bottom: 16px; }
+.bgm-convert-bottomLeft { left: 20px; bottom: 16px; }
+.bgm-convert-topRight { right: 20px; top: 16px; }
+.bgm-convert-topLeft { left: 20px; top: 16px; }

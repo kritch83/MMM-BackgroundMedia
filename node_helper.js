@@ -50,6 +50,7 @@ module.exports = NodeHelper.create({
 
 	stop () {
 		clearInterval(this.rescanTimer);
+		clearTimeout(this.conversionTimer);
 		if (this.transcoder) this.transcoder.stop();
 	},
 
@@ -75,6 +76,7 @@ module.exports = NodeHelper.create({
 		if (key === this.configKey) {
 			// Another browser (or a page reload) with the same config: just catch it up.
 			this.sendItems();
+			this.sendSocketNotification("BGM_CONVERSION", this.conversion);
 			return;
 		}
 		if (this.configKey) {
@@ -85,6 +87,7 @@ module.exports = NodeHelper.create({
 		this.config = config;
 		this.baseDir = global.root_path || process.cwd();
 		this.entries = new Map();
+		this.conversion = null;
 
 		const { device, model, profile } = resolveProfile(config.device, config.videoProfile);
 		this.profile = profile;
@@ -102,7 +105,7 @@ module.exports = NodeHelper.create({
 		this.transcoder = null;
 		if (ffmpegOk && this.ffprobeOk) {
 			try {
-				this.transcoder = new Transcoder({ ffmpegPath: config.ffmpegPath, cacheDir: this.cacheDir, profile, log });
+				this.transcoder = new Transcoder({ ffmpegPath: config.ffmpegPath, cacheDir: this.cacheDir, profile, log, onStatus: (status) => this.onConversion(status) });
 			} catch (error) {
 				log.error(`cannot use cache folder ${this.cacheDir} (${error.message}); videos that need converting will be skipped`);
 			}
@@ -203,7 +206,7 @@ module.exports = NodeHelper.create({
 			entry.status = "skip";
 		} else if (decision.action === "native") {
 			// A cached copy means the browser failed on the original before (see playbackError).
-			const key = this.transcoder && cacheKey(entry, this.profile);
+			const key = this.transcoder && cacheKey(entry, entry.info, this.profile);
 			if (key && this.transcoder.isCached(key)) {
 				entry.cacheKey = key;
 				this.markReady(entry, this.transcoder.outputPath(key));
@@ -221,7 +224,7 @@ module.exports = NodeHelper.create({
 			entry.status = "skip";
 			return;
 		}
-		const key = cacheKey(entry, this.profile);
+		const key = cacheKey(entry, entry.info, this.profile);
 		entry.cacheKey = key;
 		if (this.transcoder.isCached(key)) {
 			this.markReady(entry, this.transcoder.outputPath(key));
@@ -259,6 +262,27 @@ module.exports = NodeHelper.create({
 			entry.status = "error";
 		}
 		this.scheduleSend();
+	},
+
+	// New file / finished go out at once; percent updates for the same file at most once a second.
+	onConversion (status) {
+		const last = this.conversionSent;
+		this.conversion = status;
+		const sameFile = status && last && status.name === last.name && status.index === last.index;
+		const wait = 1000 - (Date.now() - (this.conversionSentAt || 0));
+		if (sameFile && wait > 0) {
+			if (!this.conversionTimer) this.conversionTimer = setTimeout(() => this.sendConversion(), wait);
+			return;
+		}
+		this.sendConversion();
+	},
+
+	sendConversion () {
+		clearTimeout(this.conversionTimer);
+		this.conversionTimer = null;
+		this.conversionSent = this.conversion;
+		this.conversionSentAt = Date.now();
+		this.sendSocketNotification("BGM_CONVERSION", this.conversion);
 	},
 
 	// Leading-edge throttle: first update goes out at once, then at most every 2 s.

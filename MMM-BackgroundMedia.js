@@ -40,8 +40,11 @@ Module.register("MMM-BackgroundMedia", {
 		sortDescending: false,
 		imageDuration: 15 * 1000,
 		maxVideoDuration: 0, // ms; 0 = play whole video
-		shortVideoLength: 10 * 1000, // videos shorter than this (ms)...
-		shortVideoDelay: 3 * 1000, // ...hold their last frame this long before moving on; 0 = off
+		shortVideoLength: 10 * 1000, // ms; videos shorter than this count as "short" below
+		videoSlowdown: "short", // "off" | "short" | "all": ease to a stop at the end
+		slowdownDuration: 1000, // ms the slow-down takes on screen
+		videoFreeze: "short", // "off" | "short" | "all": then hold the last frame...
+		freezeDuration: 3 * 1000, // ...for this long (ms) before moving on
 		transitionDuration: 1500, // crossfade ms; 0 = hard cut
 		fit: "contain-blur", // "contain-blur" | "contain" | "cover"
 		position: "center",
@@ -54,6 +57,8 @@ Module.register("MMM-BackgroundMedia", {
 		showProgressBar: true,
 		showIndicator: true,
 		showGradient: true,
+		showConversionStatus: true,
+		conversionStatusLocation: "bottomLeft", // bottomRight | bottomLeft | topRight | topLeft
 		gradientDirection: "vertical", // vertical | horizontal | both | radial
 		gradient: ["rgba(0, 0, 0, 0.75) 0%", "rgba(0, 0, 0, 0) 40%", "rgba(0, 0, 0, 0) 80%", "rgba(0, 0, 0, 0.75) 100%"],
 		horizontalGradient: ["rgba(0, 0, 0, 0.75) 0%", "rgba(0, 0, 0, 0) 40%", "rgba(0, 0, 0, 0) 80%", "rgba(0, 0, 0, 0.75) 100%"],
@@ -104,6 +109,8 @@ Module.register("MMM-BackgroundMedia", {
 		const kb = this.defaults.keyBindings;
 		const userKb = user.keyBindings || {};
 		this.config.keyBindings = { ...kb, ...userKb, map: { ...kb.map, ...userKb.map }, menuMap: { ...kb.menuMap, ...userKb.menuMap } };
+		// Older configs used shortVideoDelay for the freeze length.
+		if (user.freezeDuration === undefined && user.shortVideoDelay !== undefined) this.config.freezeDuration = user.shortVideoDelay;
 
 		this.playlist = new BackgroundMediaPlaylist({ order: this.config.order, sortDescending: this.config.sortDescending });
 		this.layers = [];
@@ -154,6 +161,13 @@ Module.register("MMM-BackgroundMedia", {
 		this.pausedBadge = el("div", "bgm-paused-badge", root);
 		el("i", "fa-solid fa-pause", this.pausedBadge);
 		this.empty = el("div", "bgm-empty", root);
+		this.convert = el("div", `bgm-convert bgm-convert-${this.config.conversionStatusLocation}`, root);
+		const convertHead = el("div", "bgm-convert-head", this.convert);
+		el("i", "fa-solid fa-spinner fa-spin", convertHead);
+		this.convertTitle = el("span", "", convertHead);
+		this.convertPercent = el("span", "bgm-convert-percent", convertHead);
+		this.convertName = el("div", "bgm-convert-name", this.convert);
+		this.convertBar = el("div", "bgm-convert-bar", el("div", "bgm-convert-track", this.convert));
 
 		// The indicator and folder menu go above every other region, not behind them.
 		this.overlay = el("div", "bgm-overlay", document.body);
@@ -167,6 +181,7 @@ Module.register("MMM-BackgroundMedia", {
 
 		this.root = root;
 		this.updateEmpty();
+		this.updateConversion();
 		if (!this.current && this.playlist.size) setTimeout(() => this.advance("next"), 0);
 		return root;
 	},
@@ -198,6 +213,9 @@ Module.register("MMM-BackgroundMedia", {
 			this.applyFilter();
 			this.updateEmpty();
 			if (this.root && !this.current && !this.loading && this.playlist.size) this.advance("next");
+		} else if (notification === "BGM_CONVERSION") {
+			this.conversion = payload;
+			this.updateConversion();
 		} else if (notification === "BGM_SELECTION") {
 			this.selection = payload.selection || [];
 			this.applyFilter();
@@ -296,6 +314,7 @@ Module.register("MMM-BackgroundMedia", {
 			// Also cancels a short-video hold; "seeked" rebuilds the progress bar.
 			layer.holding = false;
 			layer.finished = false;
+			layer.video.playbackRate = 1;
 			if (this.timerAnim) this.timerAnim.cancel();
 			this.timerAnim = null;
 			layer.video.currentTime = 0;
@@ -442,46 +461,113 @@ Module.register("MMM-BackgroundMedia", {
 		}
 
 		const video = layer.video;
-		const maxSeconds = this.config.maxVideoDuration > 0 ? this.config.maxVideoDuration / 1000 : Infinity;
+		const cfg = this.config;
+		const maxSeconds = cfg.maxVideoDuration > 0 ? cfg.maxVideoDuration / 1000 : Infinity;
 		const total = () => Math.min(Number.isFinite(video.duration) ? video.duration : 0, maxSeconds);
+		const appliesTo = (mode) => mode === "all" || (mode === "short" && total() > 0 && total() * 1000 < cfg.shortVideoLength);
+		// Slow-down length D in on-screen seconds; braking evenly to zero uses the last D/2 seconds of footage.
+		const slowSeconds = () => (cfg.slowdownDuration > 0 && appliesTo(cfg.videoSlowdown) ? Math.min(cfg.slowdownDuration / 1000, 2 * total()) : 0);
+		const holdSeconds = () => (appliesTo(cfg.videoFreeze) ? Math.max(0, cfg.freezeDuration) / 1000 : 0);
+		// A slow-down brakes to the start of the last frame (measured from frame timestamps), not past it.
+		let frameSeconds = null;
+		let lastMediaTime = null;
+		const end = () => total() - (slowSeconds() ? frameSeconds || 1 / 30 : 0);
+		// On-screen seconds for the whole video, and how many are left from the current position.
+		const screenTime = () => {
+			const D = slowSeconds();
+			const remaining = Math.max(0, end() - video.currentTime);
+			return { full: end() + D / 2, left: remaining > D / 2 ? remaining + D / 2 : Math.sqrt(2 * remaining * D) };
+		};
+		// Speed from footage left (not a timer), so pause and replay need no special handling.
+		// Braking evenly, the frame from s1 to s2 seconds-left must take sqrt(2D)·(√s1 − √s2) on screen,
+		// so its speed is (√s1 + √s2) / √(2D); summed over the frames that lasts exactly D.
+		const updateRate = () => {
+			const D = slowSeconds();
+			const s1 = Math.max(0, end() - video.currentTime);
+			const s2 = Math.max(0, s1 - (frameSeconds || 1 / 30));
+			const rate = !D || s1 >= D / 2 ? 1 : Math.min(1, Math.max(0.0625, (Math.sqrt(s1) + Math.sqrt(s2)) / Math.sqrt(2 * D)));
+			if (Math.abs(video.playbackRate - rate) > 0.005) video.playbackRate = rate;
+		};
 		layer.finished = false;
 		layer.holding = false;
 		const finish = (allowHold = true) => {
 			if (layer.finished || token !== this.showToken) return;
 			layer.finished = true;
-			const length = total();
-			const hold = allowHold && length > 0 && length * 1000 < this.config.shortVideoLength ? this.config.shortVideoDelay : 0;
+			const hold = allowHold ? holdSeconds() : 0;
 			if (hold <= 0) {
 				this.advance("next");
 				return;
 			}
-			// Short clips rest on their last frame; the hold pauses and resumes like a photo timer.
+			// Rest on the last frame; the hold pauses and resumes like a photo timer.
 			layer.holding = true;
 			video.pause();
+			const whole = screenTime().full + hold;
 			if (this.timerAnim) this.timerAnim.cancel();
-			this.timerAnim = this.bar.animate([{ transform: "scaleX(1)" }, { transform: "scaleX(1)" }], { duration: hold, fill: "forwards" });
+			this.timerAnim = this.bar.animate([{ transform: `scaleX(${screenTime().full / whole})` }, { transform: "scaleX(1)" }], { duration: hold * 1000, fill: "forwards" });
 			this.timerAnim.onfinish = () => {
 				if (token === this.showToken) this.advance("next");
 			};
 			this.applyPlayState();
 		};
+		// The bar spans video + freeze: this part runs to where the freeze takes over.
 		const syncBar = () => {
-			if (layer.holding) return;
-			const length = total();
-			if (!length) return;
+			if (layer.holding || !total()) return;
+			const { full: screen, left } = screenTime();
+			const whole = screen + holdSeconds();
 			if (this.timerAnim) this.timerAnim.cancel();
-			const from = Math.min(1, video.currentTime / length);
-			this.timerAnim = this.bar.animate([{ transform: `scaleX(${from})` }, { transform: "scaleX(1)" }], { duration: Math.max(0, (length - video.currentTime) * 1000), fill: "forwards" });
+			this.timerAnim = this.bar.animate(
+				[{ transform: `scaleX(${Math.min(1, (screen - left) / whole)})` }, { transform: `scaleX(${screen / whole})` }],
+				{ duration: Math.max(0, left * 1000), fill: "forwards" }
+			);
 			if (video.paused) this.timerAnim.pause();
 		};
 		const freezeBar = () => {
 			if (this.timerAnim && !layer.holding) this.timerAnim.pause();
 		};
+		// Recompute the speed on every frame, but only from ~1 s before the slow zone (cheap on a Pi);
+		// timeupdate (4×/s) starts it, and it restarts after a replay.
+		let looping = false;
+		const onFrame = (now, frame) => {
+			if (signal.aborted || token !== this.showToken) {
+				looping = false;
+				return;
+			}
+			const t = frame.mediaTime;
+			if (lastMediaTime !== null && t > lastMediaTime && video.playbackRate > 0.99) {
+				frameSeconds = Math.max(1 / 120, Math.min(frameSeconds || Infinity, t - lastMediaTime));
+			}
+			lastMediaTime = t;
+			// Replayed from the start: stop until timeupdate brings us near the end again.
+			if (end() - t > slowSeconds() / 2 + 1.5) {
+				looping = false;
+				return;
+			}
+			// The last frame is on screen: the video has come to rest.
+			if (t >= end() - 0.002) {
+				looping = false;
+				finish();
+				return;
+			}
+			updateRate();
+			video.requestVideoFrameCallback(onFrame);
+		};
+		const startSlowdown = () => {
+			if (looping || !slowSeconds() || end() - video.currentTime > slowSeconds() / 2 + 1) return;
+			looping = true;
+			if (typeof video.requestVideoFrameCallback === "function") {
+				lastMediaTime = null;
+				video.requestVideoFrameCallback(onFrame);
+			} else {
+				video.addEventListener("timeupdate", updateRate, { signal });
+			}
+		};
+		startSlowdown();
+		video.addEventListener("timeupdate", startSlowdown, { signal });
 		video.addEventListener("playing", syncBar, { signal });
 		video.addEventListener("seeked", syncBar, { signal });
 		video.addEventListener("pause", freezeBar, { signal });
 		video.addEventListener("waiting", freezeBar, { signal });
-		video.addEventListener("ended", finish, { signal });
+		video.addEventListener("ended", () => finish(), { signal });
 		if (Number.isFinite(maxSeconds)) {
 			video.addEventListener("timeupdate", () => {
 				if (video.currentTime >= maxSeconds) finish();
@@ -522,7 +608,10 @@ Module.register("MMM-BackgroundMedia", {
 			layer.video.removeAttribute("src");
 			layer.video.load();
 		}
-		if (layer.video) layer.video.style.display = "none";
+		if (layer.video) {
+			layer.video.playbackRate = 1;
+			layer.video.style.display = "none";
+		}
 		layer.item = null;
 		layer.holding = false;
 		const ctx = layer.backdrop.getContext("2d");
@@ -591,6 +680,21 @@ Module.register("MMM-BackgroundMedia", {
 		}
 		this.empty.textContent = text;
 		this.empty.classList.toggle("bgm-show", Boolean(text) && !this.current);
+	},
+
+	updateConversion () {
+		if (!this.convert) return;
+		const status = this.conversion;
+		this.convert.classList.toggle("bgm-show", Boolean(status) && this.config.showConversionStatus);
+		if (!status) return;
+		const percent = Number.isFinite(status.percent) ? Math.round(status.percent) : null;
+		this.convertTitle.textContent = `Converting ${status.index} of ${status.total}`;
+		this.convertPercent.textContent = percent === null ? "" : `${percent}%`;
+		this.convertName.textContent = status.name;
+		// Ease forward, but snap back to 0 when the next file starts.
+		this.convertBar.style.transition = (percent ?? 0) < (this.lastConvertPercent ?? 0) ? "none" : "";
+		this.convertBar.style.transform = `scaleX(${(percent ?? 0) / 100})`;
+		this.lastConvertPercent = percent;
 	},
 
 	/* ---------- Folder selection ---------- */
