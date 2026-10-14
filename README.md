@@ -16,7 +16,7 @@ On the mirror:
 ```bash
 sudo apt install ffmpeg
 cd ~/MagicMirror/modules
-git clone <this repo> MMM-BackgroundMedia
+git clone https://github.com/kritch83/MMM-BackgroundMedia.git
 cd MMM-BackgroundMedia
 npm install --omit=dev
 ```
