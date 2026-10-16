@@ -117,8 +117,12 @@ Install [MMM-KeyBindings](https://github.com/shbatm/MMM-KeyBindings) and add it 
 | Replay current item (also resumes) | `ArrowUp` |
 | Toggle info overlay | `ArrowDown` |
 | Open folder picker | `Menu` |
+| Re-convert the current video (press twice within 3 s) | `c` |
+| Delete all converted videos and convert again (press twice within 3 s) | `Shift`+`C` |
 
 While paused, Next and Previous still move between items, so you can browse at your own pace.
+
+**Re-converting.** `c` deletes the converted copy of the video on screen, skips to the next item, and converts that file again; use it if a converted video looks wrong. `Shift`+`C` does the same for every converted video, so the whole library is converted again, which takes a long time on a Pi. Both need a second press within 3 seconds; the first only shows a prompt. Your folder selection isn't affected. Letter keys need adding to MMM-KeyBindings' `handleKeys` (see below). On a remote, map spare buttons to `c`/`C` in its `keyMap`, or bind other keys with `clearVideoCache`/`clearAllCache`.
 
 **Folder picker:** press `Menu`, then:
 - `▲`/`▼` move.
@@ -135,7 +139,7 @@ Example with a USB keyboard, where `m` opens the picker:
 	config: {
 		enableKeyboard: true,
 		evdev: { enabled: false }, // true for a Bluetooth remote, see MMM-KeyBindings docs
-		handleKeys: ["m"]
+		handleKeys: ["m", "c", "C"]
 	}
 },
 {
@@ -164,7 +168,9 @@ keyBindings: {
 		playPause: ["Enter", "MediaPlayPause"],
 		replay: ["ArrowUp"],
 		toggleInfo: ["ArrowDown"],
-		folderMenu: ["Menu"]
+		folderMenu: ["Menu"],
+		clearVideoCache: ["c"],
+		clearAllCache: ["C"]
 	},
 	menuMap: {
 		up: ["ArrowUp"],
@@ -190,6 +196,8 @@ Other modules can control the slideshow:
 | `BACKGROUNDMEDIA_FOLDER_MENU` | – | Open or close the folder picker |
 | `BACKGROUNDMEDIA_SELECT_FOLDERS` | `"all"`, or folder names: `["Family", "Vacation"]` / `{ folders: [...] }` | Choose which folders play. Names match the picker label (`"media2 / Pets"`) or just the last part (`"Pets"`). |
 | `BACKGROUNDMEDIA_RESCAN` | – | Look for new or removed files now |
+| `BACKGROUNDMEDIA_CLEAR_VIDEO_CACHE` | – | Re-convert the current video (no press-twice confirmation) |
+| `BACKGROUNDMEDIA_CLEAR_ALL_CACHE` | – | Delete all converted videos and convert them again (no confirmation) |
 
 Example with MMM-KeyBindings sending a notification on a long press:
 

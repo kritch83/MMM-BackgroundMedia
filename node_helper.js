@@ -65,6 +65,9 @@ module.exports = NodeHelper.create({
 			case "BGM_PLAYBACK_ERROR":
 				this.playbackError(payload && payload.id);
 				break;
+			case "BGM_CLEAR_CACHE":
+				this.clearCache(payload && payload.id);
+				break;
 			case "BGM_SELECT_FOLDERS":
 				this.select(payload && payload.ids);
 				break;
@@ -248,7 +251,16 @@ module.exports = NodeHelper.create({
 	markReady (entry, servePath) {
 		entry.servePath = servePath;
 		entry.status = "ready";
-		entry.version = `${Math.round(entry.mtime).toString(36)}${entry.cacheKey ? `-${entry.cacheKey.slice(0, 6)}` : ""}`;
+		// The converted copy's own timestamp goes in the URL, so a re-converted video is never served from the browser cache.
+		let stamp = "";
+		if (entry.cacheKey) {
+			try {
+				stamp = `-${Math.round(fs.statSync(servePath).mtimeMs).toString(36)}`;
+			} catch {
+				// Missing file: it will 404 and be skipped.
+			}
+		}
+		entry.version = `${Math.round(entry.mtime).toString(36)}${stamp}`;
 	},
 
 	playbackError (id) {
@@ -313,7 +325,8 @@ module.exports = NodeHelper.create({
 				sortName: e.sortName,
 				date: e.date,
 				mtime: e.mtime,
-				dirs: e.dirs
+				dirs: e.dirs,
+				converted: Boolean(e.cacheKey)
 			});
 		}
 		this.sendSocketNotification("BGM_ITEMS", {
@@ -336,6 +349,31 @@ module.exports = NodeHelper.create({
 			// Aborted range requests are normal while video seeks/preloads.
 			if (error && !res.headersSent) res.sendStatus(error.status || 500);
 		});
+	},
+
+	/**
+	 * Delete converted copies and convert those videos again: one video (id) or all of them.
+	 * @param {string} [id] item id; omit for the whole cache
+	 */
+	clearCache (id) {
+		if (!this.transcoder) {
+			log.warn("no converted videos to clear (ffmpeg unavailable)");
+			return;
+		}
+		const targets = [...this.entries.values()].filter((e) => e.type === "video" && e.cacheKey && e.status === "ready" && (!id || e.id === id));
+		if (id) {
+			if (!targets.length) return;
+			this.transcoder.remove(targets[0].cacheKey);
+		} else {
+			this.transcoder.clearAll();
+		}
+		log.info(id ? `deleted the converted copy of ${targets[0].path}; converting it again` : `deleted ${targets.length} converted videos; converting them again`);
+		for (const entry of targets) {
+			entry.cacheKey = null;
+			entry.status = "new";
+		}
+		this.scheduleSend();
+		eachLimit(targets, 2, (e) => this.processVideo(e).then(() => this.scheduleSend()));
 	},
 
 	select (ids) {

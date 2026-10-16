@@ -84,7 +84,9 @@ Module.register("MMM-BackgroundMedia", {
 				playPause: ["Enter", "MediaPlayPause"],
 				replay: ["ArrowUp"],
 				toggleInfo: ["ArrowDown"],
-				folderMenu: ["Menu"]
+				folderMenu: ["Menu"],
+				clearVideoCache: ["c"], // re-convert the current video (press twice)
+				clearAllCache: ["C"] // Shift+C: delete every converted video (press twice)
 			},
 			menuMap: {
 				up: ["ArrowUp"],
@@ -226,6 +228,11 @@ Module.register("MMM-BackgroundMedia", {
 	notificationReceived (notification, payload) {
 		if (notification === "KEYPRESS") {
 			this.handleKey(payload);
+		} else if (notification === "BACKGROUNDMEDIA_CLEAR_VIDEO_CACHE") {
+			// From another module: deliberate, so no press-twice confirmation.
+			this.clearCache(false);
+		} else if (notification === "BACKGROUNDMEDIA_CLEAR_ALL_CACHE") {
+			this.clearCache(true);
 		} else if (notification === "BACKGROUNDMEDIA_SELECT_FOLDERS") {
 			this.selectFolders(payload);
 		} else if (BGM_NOTIFICATION_ACTIONS[notification]) {
@@ -297,7 +304,35 @@ Module.register("MMM-BackgroundMedia", {
 				this.sendSocketNotification("BGM_RESCAN");
 				this.indicate("fa-arrows-rotate");
 				break;
+			case "clearVideoCache":
+				if (!this.current || !this.current.converted) {
+					this.indicate("fa-circle-info", "This item isn't a converted video");
+				} else {
+					this.confirmTwice(action, "Press again to re-convert this video", () => this.clearCache(false));
+				}
+				break;
+			case "clearAllCache":
+				this.confirmTwice(action, "Press again to delete all converted videos", () => this.clearCache(true));
+				break;
 		}
+	},
+
+	// Destructive keys need a second press within 3 s; the first only shows the prompt.
+	confirmTwice (action, prompt, run) {
+		const armed = this.armedAction === action && performance.now() - this.armedAt < 3000;
+		this.armedAction = armed ? null : action;
+		this.armedAt = performance.now();
+		if (armed) run();
+		else this.indicate("fa-triangle-exclamation", prompt);
+	},
+
+	clearCache (all) {
+		const current = this.current;
+		if (!all && (!current || !current.converted)) return;
+		this.sendSocketNotification("BGM_CLEAR_CACHE", all ? {} : { id: current.id });
+		this.indicate("fa-trash-can", all ? "Converted videos deleted; converting again" : "Converting this video again");
+		// Its file is being deleted, so move on rather than wait for playback to fail.
+		if (current && current.converted) this.advance("next");
 	},
 
 	setPaused (paused) {

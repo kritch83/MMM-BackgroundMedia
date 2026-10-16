@@ -147,3 +147,16 @@ test("transcoder reports file, position in batch, percent, then null", async () 
 	assert.deepEqual(two.map((s) => [s.index, s.total, s.percent]), [[2, 2, 0], [2, 2, 50]]);
 	assert.ok(fs.existsSync(t.outputPath("b".repeat(40))));
 });
+
+test("transcoder remove / clearAll delete converted videos but not ones converting now", () => {
+	const dir = tmp();
+	const log = { info () {}, warn () {}, error () {} };
+	const t = new Transcoder({ ffmpegPath: "ffmpeg", cacheDir: dir, profile: PROFILES.rpi4, log });
+	const [a, b, busy] = ["a", "b", "c"].map((ch) => ch.repeat(40));
+	for (const name of [`${a}.mp4`, `${b}.mp4`, `${busy}.mp4.part`, "state.json"]) fs.writeFileSync(path.join(dir, name), "");
+	t.jobs.set(busy, {});
+	t.remove(a);
+	assert.deepEqual(fs.readdirSync(dir).sort(), [`${b}.mp4`, `${busy}.mp4.part`, "state.json"]);
+	t.clearAll();
+	assert.deepEqual(fs.readdirSync(dir).sort(), [`${busy}.mp4.part`, "state.json"], "in-progress file and folder selection survive");
+});
