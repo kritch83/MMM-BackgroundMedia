@@ -115,7 +115,7 @@ Install [MMM-KeyBindings](https://github.com/shbatm/MMM-KeyBindings) and add it 
 | Previous | `ArrowLeft`, `MediaPreviousTrack` |
 | Play / pause | `Enter`, `MediaPlayPause` |
 | Replay current item (also resumes) | `ArrowUp` |
-| Toggle info overlay | `ArrowDown` |
+| Toggle info overlay | `ArrowDown`, `i` |
 | Open folder picker | `Menu` |
 | Re-convert the current video (press twice within 3 s) | `c` |
 | Delete all converted videos and convert again (press twice within 3 s) | `Shift`+`C` |
@@ -167,7 +167,7 @@ keyBindings: {
 		previous: ["ArrowLeft", "MediaPreviousTrack"],
 		playPause: ["Enter", "MediaPlayPause"],
 		replay: ["ArrowUp"],
-		toggleInfo: ["ArrowDown"],
+		toggleInfo: ["ArrowDown", "i"],
 		folderMenu: ["Menu"],
 		clearVideoCache: ["c"],
 		clearAllCache: ["C"]
@@ -206,6 +206,40 @@ actions: [{ key: "ArrowRight", state: "KEY_LONGPRESSED", notification: "BACKGROU
 ```
 
 When the module is hidden (e.g. by MMM-Pir or a page-switching module), playback pauses and resumes when it's shown again.
+
+## Using with MMM-Carousel
+
+The two work together without changing MMM-Carousel, so it stays `git pull`-able.
+
+**Give MMM-Carousel a `position`.** Carousel requires one, e.g. `"bottom_bar"`, even if you don't show page indicators. Without it Carousel never starts, so the pages never rotate.
+
+**Choose where the background appears.** In `slides` mode, list `"MMM-BackgroundMedia"` on each page that should show it:
+
+```js
+{
+	module: "MMM-Carousel",
+	position: "bottom_bar",
+	config: {
+		mode: "slides",
+		slides: {
+			main: ["clock", "weather", "MMM-BackgroundMedia"],
+			photos: ["MMM-BackgroundMedia"],
+			news: ["newsfeed"]
+		}
+	}
+},
+```
+
+- Moving between two pages that both list it (`main` → `photos`), the background stays up and keeps playing instead of fading out and in.
+- On pages without it (`news`), it's hidden and paused, and continues where it left off when it comes back.
+- To show it on every page, add `"MMM-BackgroundMedia"` to Carousel's `ignoreModules` instead.
+- In Carousel's default `global` mode, every module, including the background, becomes a page of its own, shown one at a time. Use `slides` (or `ignoreModules`) instead.
+
+**Keys.** While MMM-Carousel is running with key bindings, BackgroundMedia leaves Carousel's keys to Carousel. By default those are `→` (next page), `←` (previous page), `↓` (pause rotation) and `Home`. The background is then controlled with:
+- the remote's media keys (`⏩`/`⏪` for next/previous, `⏯` for play/pause)
+- `Enter` (play/pause), `↑` (replay), `i` (info overlay), `Menu` (folder picker), `c`/`C` (re-convert)
+
+Add `"i"` to MMM-KeyBindings' `handleKeys` for a keyboard. While the folder picker is open, the arrows go to the picker, not to Carousel. If you'd rather the arrows control the background, map them in BackgroundMedia's own `keyBindings.map`, which overrides this, and move Carousel's keys in your `config.js`.
 
 ## Troubleshooting
 

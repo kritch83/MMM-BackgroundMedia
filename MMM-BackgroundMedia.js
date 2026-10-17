@@ -83,7 +83,7 @@ Module.register("MMM-BackgroundMedia", {
 				previous: ["ArrowLeft", "MediaPreviousTrack"],
 				playPause: ["Enter", "MediaPlayPause"],
 				replay: ["ArrowUp"],
-				toggleInfo: ["ArrowDown"],
+				toggleInfo: ["ArrowDown", "i"],
 				folderMenu: ["Menu"],
 				clearVideoCache: ["c"], // re-convert the current video (press twice)
 				clearAllCache: ["C"] // Shift+C: delete every converted video (press twice)
@@ -110,6 +110,8 @@ Module.register("MMM-BackgroundMedia", {
 		const user = this.data.config || {};
 		const kb = this.defaults.keyBindings;
 		const userKb = user.keyBindings || {};
+		// Actions you mapped yourself keep their keys even if MMM-Carousel uses them too.
+		this.userMappedActions = new Set(Object.keys(userKb.map || {}));
 		this.config.keyBindings = { ...kb, ...userKb, map: { ...kb.map, ...userKb.map }, menuMap: { ...kb.menuMap, ...userKb.menuMap } };
 		// Older configs used shortVideoDelay for the freeze length.
 		if (user.freezeDuration === undefined && user.shortVideoDelay !== undefined) this.config.freezeDuration = user.shortVideoDelay;
@@ -233,11 +235,23 @@ Module.register("MMM-BackgroundMedia", {
 			this.clearCache(false);
 		} else if (notification === "BACKGROUNDMEDIA_CLEAR_ALL_CACHE") {
 			this.clearCache(true);
+		} else if (notification === "CAROUSEL_CHANGED") {
+			// Sent before Carousel hides every module for the page change.
+			this.onNextCarouselSlide = this.isOnCarouselSlide(payload && payload.slide);
 		} else if (notification === "BACKGROUNDMEDIA_SELECT_FOLDERS") {
 			this.selectFolders(payload);
 		} else if (BGM_NOTIFICATION_ACTIONS[notification]) {
 			this.doAction(BGM_NOTIFICATION_ACTIONS[notification]);
 		}
+	},
+
+	// MMM-Carousel hides every module between pages; stay up (and playing) when the next page shows us too.
+	hide (speed, callback, options = {}) {
+		if (options && options.lockString === "mmmc" && this.onNextCarouselSlide) {
+			if (typeof callback === "function") callback();
+			return;
+		}
+		Module.prototype.hide.call(this, speed, callback, options);
 	},
 
 	suspend () {
@@ -266,7 +280,41 @@ Module.register("MMM-BackgroundMedia", {
 		}
 		if (kp.currentMode && kp.currentMode !== kb.mode) return;
 		const action = lookup(kb.map);
-		if (action) this.doAction(action);
+		if (!action) return;
+		// Keys MMM-Carousel uses are its, unless you mapped that action here yourself.
+		if (this.carouselKeys().has(kp.keyName) && !this.userMappedActions.has(action)) return;
+		this.doAction(action);
+	},
+
+	carousel () {
+		return MM.getModules().withClass("MMM-Carousel")[0] || null;
+	},
+
+	// Keys MMM-Carousel reacts to, read from its config (never changed), worked out once.
+	carouselKeys () {
+		if (this.carouselKeySet) return this.carouselKeySet;
+		const keys = new Set();
+		const carousel = this.carousel();
+		// Carousel ignores keys in positional mode.
+		if (carousel && carousel.config.mode !== "positional") {
+			const ckb = carousel.config.keyBindings || {};
+			if (ckb.enabled !== false && (ckb.mode || "DEFAULT") === this.config.keyBindings.mode) {
+				const map = { NextSlide: "ArrowRight", PrevSlide: "ArrowLeft", Pause: "ArrowDown", Slide0: "Home", ...ckb.map };
+				for (const key of Object.values(map)) [].concat(key).forEach((k) => keys.add(k));
+			}
+			if (carousel.config.enableKeyboardControl) ["ArrowRight", "ArrowLeft", "ArrowDown", "Home", ..."0123456789"].forEach((k) => keys.add(k));
+			if (keys.size) Log.info(`[${this.name}] MMM-Carousel handles ${[...keys].join(", ")}; leaving those keys to it`);
+		}
+		this.carouselKeySet = keys;
+		return keys;
+	},
+
+	// Is this module listed on Carousel slide number `index` (slides mode, same key order Carousel uses)?
+	isOnCarouselSlide (index) {
+		const carousel = this.carousel();
+		if (!carousel || carousel.config.mode !== "slides" || !carousel.config.slides) return false;
+		const slide = Object.values(carousel.config.slides)[index];
+		return Array.isArray(slide) && slide.some((m) => (typeof m === "string" ? m : m && m.name) === this.name);
 	},
 
 	doAction (action) {
@@ -394,10 +442,12 @@ Module.register("MMM-BackgroundMedia", {
 		clearTimeout(this.retryTimer);
 		// Freeze the current timer so it can't fire while the next item loads.
 		if (this.timerAnim) this.timerAnim.pause();
-		await this.show(item);
+		await this.display(item);
 	},
 
-	async show (item) {
+	// Named display(), not show(): show()/hide() are MagicMirror's own "make this module visible" methods,
+	// which other modules (MMM-Carousel, MMM-Pir, Remote-Control) call.
+	async display (item) {
 		const token = ++this.showToken;
 		const incoming = this.layers.find((layer) => layer !== this.active);
 		this.resetLayer(incoming);
