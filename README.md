@@ -111,17 +111,34 @@ The slow-down is an even "braking" curve. A 1 s `slowdownDuration` plays the las
 
 Install [MMM-KeyBindings](https://github.com/shbatm/MMM-KeyBindings) and add it to your config. This module listens for its `KEYPRESS` notifications.
 
-| Action | Default keys |
-|---|---|
-| Next | `ArrowRight`, `MediaNextTrack` |
-| Previous | `ArrowLeft`, `MediaPreviousTrack` |
-| Play / pause | `Enter`, `MediaPlayPause` |
-| Replay current item (also resumes) | `ArrowUp` |
-| Toggle info overlay | `ArrowDown`, `i` |
-| Open folder picker | `Menu` |
-| Re-convert the current video (press twice within 3 s) | `c` |
-| Delete all converted videos and convert again (press twice within 3 s) | `Shift`+`C` |
-| Move the current file to the deleted folder (press 3× within 1 s) | `d` |
+### Full key list
+
+| Action | Keyboard | Remote button | Action name | Notes |
+|---|---|---|---|---|
+| Next item | `→`, `⏭` media key | Right, `⏩` | `next` | |
+| Previous item | `←`, `⏮` media key | Left, `⏪` | `previous` | |
+| Play / pause | `Enter`, `⏯` media key | OK, `⏯` | `playPause` | Pauses a playing video too |
+| Start the current item over | `↑` | Up | `replay` | Also resumes if paused |
+| Info overlay on/off | `↓`, `i` | Down | `toggleInfo` | |
+| Open the folder picker | `Menu` (context-menu key) | Menu | `folderMenu` | |
+| Re-convert the current video | `c`, twice within 3 s | – | `clearVideoCache` | First press only shows a prompt |
+| Delete all converted videos and convert again | `Shift`+`C`, twice within 3 s | – | `clearAllCache` | First press only shows a prompt |
+| Move the current file to the deleted folder | `d`, 3× within 1 s | – | `deleteFile` | Holding the key does nothing |
+| Pause / Resume / Rescan for new files | – | – | `pause` / `play` / `rescan` | No default key; bind one if you want |
+
+While the folder picker is open:
+
+| Action | Keyboard | Remote button | Action name |
+|---|---|---|---|
+| Move up | `↑` | Up | `menuUp` |
+| Move down | `↓` | Down | `menuDown` |
+| Tick / untick a folder | `Enter`, `⏯` | OK, `⏯` | `menuSelect` |
+| Close and play the ticked folders | `Esc`, `Backspace`, `Menu` | Back, Menu | `menuClose` |
+
+- **Action name**: use it to rebind a key in `keyBindings.map` (or `keyBindings.menuMap` for the picker, without the `menu` prefix: `up`, `down`, `select`, `close`), or as the payload of a `BACKGROUNDMEDIA_ACTION` notification (see [Notifications](#notifications)).
+- **Letter keys** (`i`, `c`, `C`, `d`) must be listed in MMM-KeyBindings' `handleKeys`. On a remote, give spare buttons those names in MMM-KeyBindings' `keyMap`.
+- **Remote buttons** come from MMM-KeyBindings' default `keyMap`: `KEY_LEFT`/`RIGHT`/`UP`/`DOWN`, `KEY_KPENTER` (OK), `KEY_MENU`, `KEY_BACK`, `KEY_PLAYPAUSE`, `KEY_FASTFORWARD` (⏩) and `KEY_REWIND` (⏪).
+- **With MMM-Carousel**, `→`, `←`, `↓` and `Home` go to Carousel (see [Using with MMM-Carousel](#using-with-mmm-carousel)). Use the `⏩`/`⏪` media keys for next/previous and `i` for the info overlay.
 
 While paused, Next and Previous still move between items, so you can browse at your own pace.
 
@@ -129,12 +146,7 @@ While paused, Next and Previous still move between items, so you can browse at y
 
 **Re-converting.** `c` deletes the converted copy of the video on screen, skips to the next item, and converts that file again; use it if a converted video looks wrong. `Shift`+`C` does the same for every converted video, so the whole library is converted again, which takes a long time on a Pi. Both need a second press within 3 seconds; the first only shows a prompt. Your folder selection isn't affected. Letter keys need adding to MMM-KeyBindings' `handleKeys` (see below). On a remote, map spare buttons to `c`/`C` in its `keyMap`, or bind other keys with `clearVideoCache`/`clearAllCache`.
 
-**Folder picker:** press `Menu`, then:
-- `▲`/`▼` move.
-- `OK`/`Enter` ticks or unticks a folder. Several can be ticked; "All media" clears them.
-- `Back`/`Menu` closes the picker and plays only the ticked folders.
-
-While the picker is open it takes key focus: MMM-KeyBindings switches to mode `BACKGROUNDMEDIA_MENU`, so other modules ignore the keys. When several `mediaPaths` are configured, each one appears as a folder, with its subfolders indented beneath it.
+**Folder picker.** Several folders can be ticked; "All media" clears them. Closing the picker plays only the ticked folders, and the choice is remembered across restarts. While the picker is open it takes key focus: MMM-KeyBindings switches to mode `BACKGROUNDMEDIA_MENU`, so other modules ignore the keys. When several `mediaPaths` are configured, each one appears as a folder, with its subfolders indented beneath it.
 
 Example with a USB keyboard, where `m` opens the picker:
 
