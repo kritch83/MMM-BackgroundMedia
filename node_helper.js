@@ -9,6 +9,7 @@ const { probe, isAvailable, summarize, decide } = require("./lib/probe");
 const { Transcoder, cacheKey } = require("./lib/transcoder");
 const { imageDate, videoDate } = require("./lib/metadata");
 const { buildFolders } = require("./lib/folders");
+const { moveToDeleted } = require("./lib/trash");
 
 // MagicMirror's logger prefixes each line with the calling module's folder name.
 const log = {
@@ -64,6 +65,9 @@ module.exports = NodeHelper.create({
 				break;
 			case "BGM_PLAYBACK_ERROR":
 				this.playbackError(payload && payload.id);
+				break;
+			case "BGM_DELETE":
+				this.deleteFile(payload && payload.id);
 				break;
 			case "BGM_CLEAR_CACHE":
 				this.clearCache(payload && payload.id);
@@ -140,6 +144,9 @@ module.exports = NodeHelper.create({
 		const config = this.config;
 		const started = Date.now();
 		const roots = config.mediaPaths.map((p) => expandPath(p, this.baseDir));
+		this.roots = roots;
+		// A custom deleted folder may sit inside a media folder; never show what's in it.
+		const deletedDir = this.deletedFolder();
 		const files = scan({
 			mediaPaths: roots,
 			recursive: config.recursive,
@@ -147,7 +154,7 @@ module.exports = NodeHelper.create({
 			extensions: config.extensions,
 			baseDir: this.baseDir,
 			onError: (p, error) => log.warn(`cannot read ${p}: ${error.message}`)
-		});
+		}).filter((file) => !deletedDir || !file.path.startsWith(deletedDir + path.sep));
 		const { folders, fileDirs } = buildFolders(roots, files, config.folderDepth);
 
 		const entries = new Map();
@@ -355,6 +362,34 @@ module.exports = NodeHelper.create({
 	 * Delete converted copies and convert those videos again: one video (id) or all of them.
 	 * @param {string} [id] item id; omit for the whole cache
 	 */
+	deletedFolder () {
+		return this.config.deletedFolder ? expandPath(this.config.deletedFolder, this.baseDir) : null;
+	},
+
+	/**
+	 * Move a file out of the library into the deleted folder (recoverable). The browser sends only
+	 * an item id, never a path, so it can't move arbitrary files.
+	 * @param {string} id item id
+	 */
+	async deleteFile (id) {
+		const entry = this.entries.get(id);
+		if (!entry) return;
+		const root = (this.roots || []).find((r) => entry.path.startsWith(r + path.sep));
+		try {
+			const dest = await moveToDeleted({ file: entry.path, root, deletedFolder: this.deletedFolder() });
+			if (this.entries.get(id) === entry) this.entries.delete(id);
+			if (entry.cacheKey && this.transcoder) this.transcoder.remove(entry.cacheKey);
+			log.info(`moved ${entry.path} to ${dest}`);
+			this.sendSocketNotification("BGM_DELETED", { ok: true, id, name: entry.name });
+			this.scheduleSend();
+			// Refresh folder counts.
+			this.rescan();
+		} catch (error) {
+			log.error(`could not move ${entry.path} to the deleted folder: ${error.message}`);
+			this.sendSocketNotification("BGM_DELETED", { ok: false, name: entry.name, error: error.message });
+		}
+	},
+
 	clearCache (id) {
 		if (!this.transcoder) {
 			log.warn("no converted videos to clear (ffmpeg unavailable)");

@@ -18,6 +18,10 @@ const BGM_NOTIFICATION_ACTIONS = {
 	BACKGROUNDMEDIA_RESCAN: "rescan"
 };
 
+// Actions BACKGROUNDMEDIA_ACTION accepts besides the folder-picker ones; each behaves like its key.
+const BGM_ACTIONS = ["next", "previous", "playPause", "pause", "play", "replay", "toggleInfo", "folderMenu", "rescan", "clearVideoCache", "clearAllCache", "deleteFile"];
+const BGM_MENU_ACTIONS = { menuUp: "up", menuDown: "down", menuSelect: "select", menuClose: "close" };
+
 const BGM_LOAD_TIMEOUT = 15000;
 const BGM_BACKDROP_WIDTH = 64;
 const BGM_BACKDROP_DIM = 0.3;
@@ -34,6 +38,9 @@ Module.register("MMM-BackgroundMedia", {
 		rescanInterval: 30 * 60 * 1000,
 		folderDepth: 1,
 		rememberFolderSelection: true,
+		deletedFolder: null, // default: a hidden ".deleted" folder in each media folder
+		deletePresses: 3, // press "d" this many times...
+		deletePressWindow: 1000, // ...within this many ms to move the current file to the deleted folder
 
 		// Playback
 		order: "shuffle", // "shuffle" | "name" | "date"
@@ -86,7 +93,8 @@ Module.register("MMM-BackgroundMedia", {
 				toggleInfo: ["ArrowDown", "i"],
 				folderMenu: ["Menu"],
 				clearVideoCache: ["c"], // re-convert the current video (press twice)
-				clearAllCache: ["C"] // Shift+C: delete every converted video (press twice)
+				clearAllCache: ["C"], // Shift+C: delete every converted video (press twice)
+				deleteFile: ["d"] // move the current file to the deleted folder (press 3× within 1 s)
 			},
 			menuMap: {
 				up: ["ArrowUp"],
@@ -220,6 +228,14 @@ Module.register("MMM-BackgroundMedia", {
 		} else if (notification === "BGM_CONVERSION") {
 			this.conversion = payload;
 			this.updateConversion();
+		} else if (notification === "BGM_DELETED") {
+			const name = payload.name.replace(/\.[^.]+$/, "");
+			if (payload.ok) {
+				// Drop it now rather than wait for the (throttled) item-list update.
+				this.playlist.setItems([...this.playlist.items.values()].filter((item) => item.id !== payload.id));
+				this.indicate("fa-trash-can", `Moved to deleted: ${name}`);
+			}
+			else this.indicate("fa-triangle-exclamation", `Couldn't delete ${name}`);
 		} else if (notification === "BGM_SELECTION") {
 			this.selection = payload.selection || [];
 			this.applyFilter();
@@ -235,6 +251,10 @@ Module.register("MMM-BackgroundMedia", {
 			this.clearCache(false);
 		} else if (notification === "BACKGROUNDMEDIA_CLEAR_ALL_CACHE") {
 			this.clearCache(true);
+		} else if (notification === "BACKGROUNDMEDIA_ACTION") {
+			this.runAction(payload);
+		} else if (notification === "BACKGROUNDMEDIA_DELETE_CURRENT") {
+			this.deleteCurrent();
 		} else if (notification === "CAROUSEL_CHANGED") {
 			// Sent before Carousel hides every module for the page change.
 			this.onNextCarouselSlide = this.isOnCarouselSlide(payload && payload.slide);
@@ -359,6 +379,9 @@ Module.register("MMM-BackgroundMedia", {
 					this.confirmTwice(action, "Press again to re-convert this video", () => this.clearCache(false));
 				}
 				break;
+			case "deleteFile":
+				if (this.countPresses(action)) this.deleteCurrent();
+				break;
 			case "clearAllCache":
 				this.confirmTwice(action, "Press again to delete all converted videos", () => this.clearCache(true));
 				break;
@@ -372,6 +395,49 @@ Module.register("MMM-BackgroundMedia", {
 		this.armedAt = performance.now();
 		if (armed) run();
 		else this.indicate("fa-triangle-exclamation", prompt);
+	},
+
+	// True on the Nth quick press (deletePresses within deletePressWindow). Presses under 70 ms apart
+	// are a held key auto-repeating, so they reset the count: holding the key never triggers it.
+	countPresses (action) {
+		const now = performance.now();
+		this.pressCounts = this.pressCounts || {};
+		const state = this.pressCounts[action] = this.pressCounts[action] || { times: [], last: -Infinity };
+		const autoRepeat = now - state.last < 70;
+		state.last = now;
+		if (autoRepeat) {
+			state.times = [];
+			return false;
+		}
+		state.times = state.times.filter((t) => now - t <= this.config.deletePressWindow);
+		state.times.push(now);
+		if (state.times.length < this.config.deletePresses) return false;
+		state.times = [];
+		return true;
+	},
+
+	// Move the item on screen to the deleted folder and go on to the next one.
+	deleteCurrent () {
+		const item = this.current;
+		if (!item) return;
+		this.sendSocketNotification("BGM_DELETE", { id: item.id });
+		this.advance("next");
+	},
+
+	// BACKGROUNDMEDIA_ACTION: run an action exactly as its key would (press counts and confirmations included).
+	runAction (payload) {
+		const name = typeof payload === "string" ? payload : payload && payload.action;
+		if (this.menuOpen) {
+			if (BGM_MENU_ACTIONS[name]) this.menuAction(BGM_MENU_ACTIONS[name]);
+			else if (name === "folderMenu") this.closeMenu();
+			return;
+		}
+		if (BGM_MENU_ACTIONS[name]) return;
+		if (!BGM_ACTIONS.includes(name)) {
+			Log.warn(`[${this.name}] unknown action "${name}" in BACKGROUNDMEDIA_ACTION`);
+			return;
+		}
+		this.doAction(name);
 	},
 
 	clearCache (all) {

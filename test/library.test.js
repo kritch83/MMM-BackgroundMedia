@@ -160,3 +160,32 @@ test("transcoder remove / clearAll delete converted videos but not ones converti
 	t.clearAll();
 	assert.deepEqual(fs.readdirSync(dir).sort(), [`${busy}.mp4.part`, "state.json"], "in-progress file and folder selection survive");
 });
+
+test("moveToDeleted: hidden .deleted folder in the media folder, keeping subfolders", async () => {
+	const { moveToDeleted } = require("../lib/trash");
+	const root = tmp();
+	const file = touch(root, "Family/2024/a.jpg");
+	const dest = await moveToDeleted({ file, root });
+	assert.equal(dest, path.join(root, ".deleted", "Family", "2024", "a.jpg"));
+	assert.ok(fs.existsSync(dest) && !fs.existsSync(file));
+	// The scanner never picks it up again.
+	assert.deepEqual(scan({ mediaPaths: [root], extensions: "jpg" }), []);
+});
+
+test("moveToDeleted: name collisions get (2), (3)", async () => {
+	const { moveToDeleted } = require("../lib/trash");
+	const root = tmp();
+	const first = await moveToDeleted({ file: touch(root, "a.jpg"), root });
+	const second = await moveToDeleted({ file: touch(root, "a.jpg"), root });
+	const third = await moveToDeleted({ file: touch(root, "a.jpg"), root });
+	assert.deepEqual([first, second, third].map((p) => path.basename(p)), ["a.jpg", "a (2).jpg", "a (3).jpg"]);
+});
+
+test("moveToDeleted: custom folder keeps the media folder's name", async () => {
+	const { moveToDeleted } = require("../lib/trash");
+	const root = path.join(tmp(), "Pictures");
+	const custom = tmp();
+	const dest = await moveToDeleted({ file: touch(root, "Trip/b.mov"), root, deletedFolder: custom });
+	assert.equal(dest, path.join(custom, "Pictures", "Trip", "b.mov"));
+	assert.ok(fs.existsSync(dest));
+});

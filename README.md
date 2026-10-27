@@ -71,6 +71,8 @@ Minimal `config/config.js` entry:
 | `gradientDirection` | `"vertical"` | `vertical`, `horizontal`, `both`, or `radial`. Stops are set with `gradient`, `horizontalGradient` and `radialGradient`; the defaults match MMM-BackgroundSlideshow. |
 | `folderDepth` | `1` | How many subfolder levels the folder picker lists below each media folder. |
 | `rememberFolderSelection` | `true` | Keep the folder selection across restarts. |
+| `deletedFolder` | `null` | Where `d` moves files. By default, a hidden `.deleted` folder inside the media folder each file came from (same drive, so even big videos move instantly). Set a path to use one folder instead; files keep `<media folder name>/<subfolders>` under it. |
+| `deletePresses` / `deletePressWindow` | `3` / `1000` | How many presses of `d`, within how many ms, move the current file to the deleted folder. |
 | `menuTimeout` | `30000` | Close the folder picker after this many ms without a key press. |
 | `device` | `"auto"` | `"auto"` (read the Pi model), `"rpi4"`, `"rpi5"`, or `"generic"`. See below. |
 | `videoProfile` | `{}` | Override profile values, e.g. `{ maxFps: 25, bitrate: "4M" }`. |
@@ -119,8 +121,11 @@ Install [MMM-KeyBindings](https://github.com/shbatm/MMM-KeyBindings) and add it 
 | Open folder picker | `Menu` |
 | Re-convert the current video (press twice within 3 s) | `c` |
 | Delete all converted videos and convert again (press twice within 3 s) | `Shift`+`C` |
+| Move the current file to the deleted folder (press 3× within 1 s) | `d` |
 
 While paused, Next and Previous still move between items, so you can browse at your own pace.
+
+**Deleting.** Pressing `d` three times within a second moves the photo or video on screen out of your library into the deleted folder (see `deletedFolder`), and the slideshow goes on to the next item. Fewer presses, slower presses, or holding `d` down do nothing. Nothing is erased: to restore a file, move it back from `.deleted` (it's a hidden folder: `ls -a` shows it). It reappears at the next rescan, or straight away with `BACKGROUNDMEDIA_RESCAN`. If the file was a converted video, its converted copy is removed from the cache.
 
 **Re-converting.** `c` deletes the converted copy of the video on screen, skips to the next item, and converts that file again; use it if a converted video looks wrong. `Shift`+`C` does the same for every converted video, so the whole library is converted again, which takes a long time on a Pi. Both need a second press within 3 seconds; the first only shows a prompt. Your folder selection isn't affected. Letter keys need adding to MMM-KeyBindings' `handleKeys` (see below). On a remote, map spare buttons to `c`/`C` in its `keyMap`, or bind other keys with `clearVideoCache`/`clearAllCache`.
 
@@ -139,7 +144,7 @@ Example with a USB keyboard, where `m` opens the picker:
 	config: {
 		enableKeyboard: true,
 		evdev: { enabled: false }, // true for a Bluetooth remote, see MMM-KeyBindings docs
-		handleKeys: ["m", "c", "C"]
+		handleKeys: ["m", "c", "C", "d"]
 	}
 },
 {
@@ -170,7 +175,8 @@ keyBindings: {
 		toggleInfo: ["ArrowDown", "i"],
 		folderMenu: ["Menu"],
 		clearVideoCache: ["c"],
-		clearAllCache: ["C"]
+		clearAllCache: ["C"],
+		deleteFile: ["d"]
 	},
 	menuMap: {
 		up: ["ArrowUp"],
@@ -198,12 +204,61 @@ Other modules can control the slideshow:
 | `BACKGROUNDMEDIA_RESCAN` | – | Look for new or removed files now |
 | `BACKGROUNDMEDIA_CLEAR_VIDEO_CACHE` | – | Re-convert the current video (no press-twice confirmation) |
 | `BACKGROUNDMEDIA_CLEAR_ALL_CACHE` | – | Delete all converted videos and convert them again (no confirmation) |
+| `BACKGROUNDMEDIA_DELETE_CURRENT` | – | Move the current file to the deleted folder (no press count) |
+| `BACKGROUNDMEDIA_ACTION` | an action name, e.g. `"next"` or `{ action: "next" }` | Exactly what that action's key does, including press counts and confirmations. Actions: `next`, `previous`, `playPause`, `pause`, `play`, `replay`, `toggleInfo`, `folderMenu`, `rescan`, `clearVideoCache`, `clearAllCache`, `deleteFile`; while the folder picker is open: `menuUp`, `menuDown`, `menuSelect`, `menuClose`. |
 
 Example with MMM-KeyBindings sending a notification on a long press:
 
 ```js
 actions: [{ key: "ArrowRight", state: "KEY_LONGPRESSED", notification: "BACKGROUNDMEDIA_SELECT_FOLDERS", payload: "all" }]
 ```
+
+### Drive everything from MMM-KeyBindings actions
+
+Instead of the built-in keys, you can map every key yourself in MMM-KeyBindings' `actions`, so all key setup lives in one place. Turn the built-in keys off so nothing fires twice, then send `BACKGROUNDMEDIA_ACTION` from MMM-KeyBindings. This block reproduces all the default keys:
+
+```js
+{
+	module: "MMM-KeyBindings",
+	config: {
+		enableKeyboard: true,
+		handleKeys: ["i", "c", "C", "d"],
+		actions: [
+			{ key: "ArrowRight", mode: "DEFAULT", notification: "BACKGROUNDMEDIA_ACTION", payload: "next" },
+			{ key: "MediaNextTrack", mode: "DEFAULT", notification: "BACKGROUNDMEDIA_ACTION", payload: "next" },
+			{ key: "ArrowLeft", mode: "DEFAULT", notification: "BACKGROUNDMEDIA_ACTION", payload: "previous" },
+			{ key: "MediaPreviousTrack", mode: "DEFAULT", notification: "BACKGROUNDMEDIA_ACTION", payload: "previous" },
+			{ key: "Enter", mode: "DEFAULT", notification: "BACKGROUNDMEDIA_ACTION", payload: "playPause" },
+			{ key: "MediaPlayPause", mode: "DEFAULT", notification: "BACKGROUNDMEDIA_ACTION", payload: "playPause" },
+			{ key: "ArrowUp", mode: "DEFAULT", notification: "BACKGROUNDMEDIA_ACTION", payload: "replay" },
+			{ key: "ArrowDown", mode: "DEFAULT", notification: "BACKGROUNDMEDIA_ACTION", payload: "toggleInfo" },
+			{ key: "i", mode: "DEFAULT", notification: "BACKGROUNDMEDIA_ACTION", payload: "toggleInfo" },
+			{ key: "Menu", mode: "DEFAULT", notification: "BACKGROUNDMEDIA_ACTION", payload: "folderMenu" },
+			{ key: "c", mode: "DEFAULT", notification: "BACKGROUNDMEDIA_ACTION", payload: "clearVideoCache" },
+			{ key: "C", mode: "DEFAULT", notification: "BACKGROUNDMEDIA_ACTION", payload: "clearAllCache" },
+			{ key: "d", mode: "DEFAULT", notification: "BACKGROUNDMEDIA_ACTION", payload: "deleteFile" },
+			// While the folder picker is open, MMM-KeyBindings is in mode "BACKGROUNDMEDIA_MENU":
+			{ key: "ArrowUp", mode: "BACKGROUNDMEDIA_MENU", notification: "BACKGROUNDMEDIA_ACTION", payload: "menuUp" },
+			{ key: "ArrowDown", mode: "BACKGROUNDMEDIA_MENU", notification: "BACKGROUNDMEDIA_ACTION", payload: "menuDown" },
+			{ key: "Enter", mode: "BACKGROUNDMEDIA_MENU", notification: "BACKGROUNDMEDIA_ACTION", payload: "menuSelect" },
+			{ key: "Return", mode: "BACKGROUNDMEDIA_MENU", notification: "BACKGROUNDMEDIA_ACTION", payload: "menuClose" },
+			{ key: "Menu", mode: "BACKGROUNDMEDIA_MENU", notification: "BACKGROUNDMEDIA_ACTION", payload: "menuClose" }
+		]
+	}
+},
+{
+	module: "MMM-BackgroundMedia",
+	position: "fullscreen_below",
+	config: {
+		mediaPaths: ["~/Pictures/Mirror"],
+		keyBindings: { enabled: false } // keys come from MMM-KeyBindings' actions above
+	}
+},
+```
+
+- Remove lines you don't want, or change `key` to any key name MMM-KeyBindings sends. Letters must also be in `handleKeys`, and remote buttons need an entry in MMM-KeyBindings' `keyMap`.
+- Giving MMM-KeyBindings an `actions` list replaces its default one. Its default is a long press of Home to toggle the monitor; copy that entry in if you use it.
+- With MMM-Carousel, leave out keys Carousel uses (by default `ArrowRight`, `ArrowLeft`, `ArrowDown` and `Home`). Otherwise both modules act on them.
 
 When the module is hidden (e.g. by MMM-Pir or a page-switching module), playback pauses and resumes when it's shown again.
 
