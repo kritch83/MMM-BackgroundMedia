@@ -52,7 +52,11 @@ Module.register("MMM-BackgroundMedia", {
 		slowdownDuration: 1000, // ms the slow-down takes on screen
 		videoFreeze: "short", // "off" | "short" | "all": then hold the last frame...
 		freezeDuration: 3 * 1000, // ...for this long (ms) before moving on
-		transitionDuration: 1500, // crossfade ms; 0 = hard cut
+		transitionDuration: 1500, // ms; default length of both fades. 0 = hard cut
+		transitionStyle: "crossfade", // "crossfade" | "black": fade out to black, then fade the next item in
+		fadeOutDuration: null, // ms; null = transitionDuration
+		fadeInDuration: null, // ms; null = transitionDuration
+		blackDuration: 0, // "black" style: ms to stay on black between fade-out and fade-in
 		fit: "contain-blur", // "contain-blur" | "contain" | "cover"
 		position: "center",
 
@@ -457,7 +461,7 @@ Module.register("MMM-BackgroundMedia", {
 
 	replay () {
 		const layer = this.active;
-		if (!layer || !layer.item) return;
+		if (!layer || !layer.item || layer.starting) return;
 		this.userPaused = false;
 		if (layer.item.type === "video") {
 			// Also cancels a short-video hold; "seeked" rebuilds the progress bar.
@@ -478,7 +482,7 @@ Module.register("MMM-BackgroundMedia", {
 		const running = !this.userPaused && !this.suspended;
 		if (this.pausedBadge) this.pausedBadge.classList.toggle("bgm-show", this.userPaused);
 		const layer = this.active;
-		if (!layer || !layer.item) return;
+		if (!layer || !layer.item || layer.starting) return;
 		if (layer.item.type === "video" && !layer.holding) {
 			if (running) layer.video.play().catch(() => {});
 			else layer.video.pause();
@@ -515,6 +519,7 @@ Module.register("MMM-BackgroundMedia", {
 	// which other modules (MMM-Carousel, MMM-Pir, Remote-Control) call.
 	async display (item) {
 		const token = ++this.showToken;
+		clearTimeout(this.beginTimer);
 		const incoming = this.layers.find((layer) => layer !== this.active);
 		this.resetLayer(incoming);
 		this.loading = true;
@@ -537,19 +542,43 @@ Module.register("MMM-BackgroundMedia", {
 		this.failures = 0;
 
 		const outgoing = this.active;
-		if (outgoing) this.stopLayer(outgoing);
+		const fades = this.fadeTimes();
+		// Fade-to-black: the next item waits for the fade-out (and black pause); nothing to wait for on the first item.
+		const gap = outgoing ? fades.gap : 0;
+		// While the screen goes black the outgoing video keeps moving; a crossfade freezes it (one decode at a time).
+		if (outgoing) this.stopLayer(outgoing, gap > 0);
 		if (this.timerAnim) this.timerAnim.cancel();
 		this.timerAnim = null;
 
+		incoming.el.style.transitionDuration = `${fades.fadeIn}ms`;
+		incoming.el.style.transitionDelay = `${gap}ms`;
 		incoming.el.classList.add("bgm-visible");
 		if (outgoing) {
+			outgoing.el.style.transitionDuration = `${fades.fadeOut}ms`;
+			outgoing.el.style.transitionDelay = "0ms";
 			outgoing.el.classList.remove("bgm-visible");
-			outgoing.cleanupTimer = setTimeout(() => this.resetLayer(outgoing), this.config.transitionDuration + 100);
+			outgoing.cleanupTimer = setTimeout(() => this.resetLayer(outgoing), fades.fadeOut + 100);
 		}
 		this.active = incoming;
 		this.current = item;
-		this.startItem(incoming, item, token);
-		this.updateInfo();
+		// The photo timer, progress bar, playback and info start as the item begins to appear.
+		incoming.starting = gap > 0;
+		const begin = () => {
+			if (token !== this.showToken) return;
+			incoming.starting = false;
+			this.startItem(incoming, item, token);
+			this.updateInfo();
+		};
+		if (gap > 0) this.beginTimer = setTimeout(begin, gap);
+		else begin();
+	},
+
+	fadeTimes () {
+		const c = this.config;
+		const fadeOut = Math.max(0, c.fadeOutDuration ?? c.transitionDuration);
+		const fadeIn = Math.max(0, c.fadeInDuration ?? c.transitionDuration);
+		const gap = c.transitionStyle === "black" ? fadeOut + Math.max(0, c.blackDuration || 0) : 0;
+		return { fadeOut, fadeIn, gap };
 	},
 
 	load (layer, item) {
@@ -739,11 +768,11 @@ Module.register("MMM-BackgroundMedia", {
 	},
 
 	// Stop an outgoing layer's playback and listeners; it stays visible while it fades out.
-	stopLayer (layer) {
+	stopLayer (layer, keepPlaying = false) {
 		if (layer.abort) layer.abort.abort();
 		layer.abort = null;
 		clearInterval(layer.backdropTimer);
-		if (layer.video) layer.video.pause();
+		if (layer.video && !keepPlaying) layer.video.pause();
 	},
 
 	resetLayer (layer) {
@@ -765,6 +794,10 @@ Module.register("MMM-BackgroundMedia", {
 		}
 		layer.item = null;
 		layer.holding = false;
+		layer.starting = false;
+		// Never let a reused layer inherit an old fade's timing (or fade in after a stale delay).
+		layer.el.style.transitionDuration = "0ms";
+		layer.el.style.transitionDelay = "0ms";
 		const ctx = layer.backdrop.getContext("2d");
 		ctx.clearRect(0, 0, layer.backdrop.width, layer.backdrop.height);
 	},

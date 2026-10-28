@@ -56,7 +56,11 @@ Minimal `config/config.js` entry:
 | `slowdownDuration` | `1000` | How long the slow-down takes on screen, in ms. |
 | `videoFreeze` | `"short"` | Which videos then hold their last frame: `"off"`, `"short"`, or `"all"`. |
 | `freezeDuration` | `3000` | How long the hold lasts, in ms. Pausing freezes it, and replay plays the clip again. The old name `shortVideoDelay` still works. |
-| `transitionDuration` | `1500` | Crossfade length in ms. `0` = hard cut. |
+| `transitionDuration` | `1500` | Default length of both fades, in ms. `0` = hard cut. |
+| `transitionStyle` | `"crossfade"` | `"crossfade"`: the next item fades in while the current one fades out. `"black"`: the current item fades out to black, then the next one fades in. |
+| `fadeOutDuration` | `null` | How long the current item takes to fade out, in ms. `null` = `transitionDuration`. |
+| `fadeInDuration` | `null` | How long the next item takes to fade in, in ms. `null` = `transitionDuration`. |
+| `blackDuration` | `0` | With `transitionStyle: "black"`, how long to stay on black between the fade-out and the fade-in, in ms. |
 | `fit` | `"contain-blur"` | `"contain-blur"`: whole picture, empty space filled with a blurred copy. `"contain"`: whole picture, black bars. `"cover"`: fill the screen, crop edges. |
 | `position` | `"center"` | CSS `object-position` for the media, e.g. `"top"`. |
 | `showInfo` | `false` | Show the info overlay at startup. It can also be toggled with a key. |
@@ -94,6 +98,15 @@ MagicMirror's Electron browser decodes video in software on both Pis. Any video 
 `"auto"` reads `/proc/device-tree/model`. Older Pis use the `rpi4` limits, and anything that isn't a Pi uses `generic`. The log shows which profile was picked.
 
 **First run:** conversion happens in the background, one file at a time, at low priority. Photos and already-playable videos show immediately, and converted videos join the slideshow as each finishes. Conversion on a Pi is slow; 4K iPhone (HEVC) clips can take several times their own length. Results are cached, keyed to the file and to the output's size and frame rate, so each file is only converted once. Moving to a Pi 5 reuses the cache; only clips above 30 fps are re-converted, to keep their full frame rate. Cached files for deleted videos are cleaned up on rescan. If the browser fails on a video that looked playable, that file is converted automatically.
+
+### Transitions
+
+```js
+transitionStyle: "crossfade",                              // default: the next item fades in over the current one
+transitionStyle: "black", fadeOutDuration: 800, blackDuration: 300, fadeInDuration: 1200, // dip to black between items
+```
+
+With `"black"`, a photo's display time, the progress bar and video playback start when the next item begins to fade in, not during the black. The outgoing video keeps playing while it fades out.
 
 ### Video endings
 
