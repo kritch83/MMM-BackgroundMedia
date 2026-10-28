@@ -52,6 +52,10 @@ Minimal `config/config.js` entry:
 | `imageDuration` | `15000` | How long each photo shows, in ms. |
 | `maxVideoDuration` | `0` | Cut videos off after this many ms. `0` = play the whole video. |
 | `shortVideoLength` | `10000` | Videos shorter than this many ms count as "short" for the two options below. |
+| `shortVideoStyle` | `"ending"` | How short videos play. `"ending"`: they use `videoSlowdown` / `videoFreeze` below. `"midpause"`: they ease to a stop partway, hold, ease back up, and fade out just before the end. See [Mid-pause style](#mid-pause-style-for-short-videos). |
+| `midPauseIntro` | `"fade"` | `"midpause"` only. `"fade"`: fade in at normal speed. `"speedup"`: start frozen and ease up to normal speed as it fades in. |
+| `midPausePosition` | `0.5` | `"midpause"` only. Where to pause, as a fraction of the video. |
+| `midPauseFadeOut` | `250` | `"midpause"` only. ms before the end that the fade-out starts. It lasts exactly that long, so the video is fully faded at its last frame. |
 | `videoSlowdown` | `"short"` | Which videos ease to a stop at the end: `"off"`, `"short"`, or `"all"`. See [Video endings](#video-endings). |
 | `slowdownDuration` | `1000` | How long the slow-down takes on screen, in ms. |
 | `videoFreeze` | `"short"` | Which videos then hold their last frame: `"off"`, `"short"`, or `"all"`. |
@@ -98,6 +102,19 @@ MagicMirror's Electron browser decodes video in software on both Pis. Any video 
 `"auto"` reads `/proc/device-tree/model`. Older Pis use the `rpi4` limits, and anything that isn't a Pi uses `generic`. The log shows which profile was picked.
 
 **First run:** conversion happens in the background, one file at a time, at low priority. Photos and already-playable videos show immediately, and converted videos join the slideshow as each finishes. Conversion on a Pi is slow; 4K iPhone (HEVC) clips can take several times their own length. Results are cached, keyed to the file and to the output's size and frame rate, so each file is only converted once. Moving to a Pi 5 reuses the cache; only clips above 30 fps are re-converted, to keep their full frame rate. Cached files for deleted videos are cleaned up on rescan. If the browser fails on a video that looked playable, that file is converted automatically.
+
+### Mid-pause style for short videos
+
+```js
+shortVideoStyle: "midpause", midPauseIntro: "speedup", freezeDuration: 2000, midPauseFadeOut: 250
+```
+
+With `shortVideoStyle: "midpause"`, each short video (under `shortVideoLength`):
+1. Fades in. With `midPauseIntro: "speedup"`, it also starts frozen and eases up to normal speed.
+2. Eases to a stop at `midPausePosition` (halfway by default), holds the frame for `freezeDuration`, then eases back up.
+3. Plays the rest, and starts fading out `midPauseFadeOut` ms before its end while still playing, as the next item comes in with your normal transition.
+
+Each ease takes `slowdownDuration`. The end slow-down and end freeze don't apply to these videos. The progress bar covers the whole item, including the eases and the hold. Pausing during the hold extends it, and replay starts the video over. Longer videos are unaffected.
 
 ### Transitions
 

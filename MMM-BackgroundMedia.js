@@ -1,4 +1,4 @@
-/* global BackgroundMediaPlaylist */
+/* global BackgroundMediaPlaylist, BackgroundMediaMotion */
 
 /*
  * MMM-BackgroundMedia
@@ -48,6 +48,10 @@ Module.register("MMM-BackgroundMedia", {
 		imageDuration: 15 * 1000,
 		maxVideoDuration: 0, // ms; 0 = play whole video
 		shortVideoLength: 10 * 1000, // ms; videos shorter than this count as "short" below
+		shortVideoStyle: "ending", // "ending": short videos use videoSlowdown/videoFreeze below | "midpause": see midPause* options
+		midPauseIntro: "fade", // "midpause": "fade" in at normal speed | "speedup" from a standstill
+		midPausePosition: 0.5, // "midpause": ease to a stop here (fraction of the video), hold freezeDuration, ease back up
+		midPauseFadeOut: 250, // "midpause": ms before the end that the fade-out starts (it ends at the last frame)
 		videoSlowdown: "short", // "off" | "short" | "all": ease to a stop at the end
 		slowdownDuration: 1000, // ms the slow-down takes on screen
 		videoFreeze: "short", // "off" | "short" | "all": then hold the last frame...
@@ -110,7 +114,7 @@ Module.register("MMM-BackgroundMedia", {
 	},
 
 	getScripts () {
-		return [this.file("playlist.js")];
+		return [this.file("playlist.js"), this.file("motion.js")];
 	},
 
 	getStyles () {
@@ -463,7 +467,9 @@ Module.register("MMM-BackgroundMedia", {
 		const layer = this.active;
 		if (!layer || !layer.item || layer.starting) return;
 		this.userPaused = false;
-		if (layer.item.type === "video") {
+		if (layer.restart) {
+			layer.restart();
+		} else if (layer.item.type === "video") {
 			// Also cancels a short-video hold; "seeked" rebuilds the progress bar.
 			layer.holding = false;
 			layer.finished = false;
@@ -483,6 +489,19 @@ Module.register("MMM-BackgroundMedia", {
 		if (this.pausedBadge) this.pausedBadge.classList.toggle("bgm-show", this.userPaused);
 		const layer = this.active;
 		if (!layer || !layer.item || layer.starting) return;
+		const setAnim = (anim) => {
+			if (!anim) return;
+			if (!running) anim.pause();
+			else if (anim.playState === "paused") anim.play();
+		};
+		if (layer.midPause) {
+			// Mid-pause style: the bar and the hold run on their own clocks; the video sits still during the hold.
+			setAnim(this.timerAnim);
+			setAnim(layer.holdAnim);
+			if (running && !layer.midHolding) layer.video.play().catch(() => {});
+			else layer.video.pause();
+			return;
+		}
 		if (layer.item.type === "video" && !layer.holding) {
 			if (running) layer.video.play().catch(() => {});
 			else layer.video.pause();
@@ -505,19 +524,21 @@ Module.register("MMM-BackgroundMedia", {
 
 	/* ---------- Playback engine ---------- */
 
-	async advance (direction) {
+	async advance (direction, opts = {}) {
 		if (!this.root) return;
 		const item = direction === "previous" ? this.playlist.previous() : this.playlist.next();
 		if (!item) return;
 		clearTimeout(this.retryTimer);
-		// Freeze the current timer so it can't fire while the next item loads.
-		if (this.timerAnim) this.timerAnim.pause();
-		await this.display(item);
+		// Freeze the current timer so it can't fire while the next item loads (unless preloading ahead).
+		if (this.timerAnim && !opts.keepTimer) this.timerAnim.pause();
+		await this.display(item, opts);
 	},
 
 	// Named display(), not show(): show()/hide() are MagicMirror's own "make this module visible" methods,
 	// which other modules (MMM-Carousel, MMM-Pir, Remote-Control) call.
-	async display (item) {
+	// opts.swapWhen: () => Promise; load now, swap in when it resolves (preloading ahead).
+	// opts.fadeOut: fade-out length for this swap. opts.keepOutgoingPlaying: outgoing video keeps playing as it fades.
+	async display (item, opts = {}) {
 		const token = ++this.showToken;
 		clearTimeout(this.beginTimer);
 		const incoming = this.layers.find((layer) => layer !== this.active);
@@ -540,13 +561,17 @@ Module.register("MMM-BackgroundMedia", {
 		if (token !== this.showToken) return;
 		this.loading = false;
 		this.failures = 0;
+		if (opts.swapWhen) {
+			await opts.swapWhen();
+			if (token !== this.showToken) return;
+		}
 
 		const outgoing = this.active;
-		const fades = this.fadeTimes();
+		const fades = this.fadeTimes(opts.fadeOut);
 		// Fade-to-black: the next item waits for the fade-out (and black pause); nothing to wait for on the first item.
 		const gap = outgoing ? fades.gap : 0;
 		// While the screen goes black the outgoing video keeps moving; a crossfade freezes it (one decode at a time).
-		if (outgoing) this.stopLayer(outgoing, gap > 0);
+		if (outgoing) this.stopLayer(outgoing, gap > 0 || opts.keepOutgoingPlaying);
 		if (this.timerAnim) this.timerAnim.cancel();
 		this.timerAnim = null;
 
@@ -573,9 +598,9 @@ Module.register("MMM-BackgroundMedia", {
 		else begin();
 	},
 
-	fadeTimes () {
+	fadeTimes (fadeOutOverride) {
 		const c = this.config;
-		const fadeOut = Math.max(0, c.fadeOutDuration ?? c.transitionDuration);
+		const fadeOut = Math.max(0, fadeOutOverride ?? c.fadeOutDuration ?? c.transitionDuration);
 		const fadeIn = Math.max(0, c.fadeInDuration ?? c.transitionDuration);
 		const gap = c.transitionStyle === "black" ? fadeOut + Math.max(0, c.blackDuration || 0) : 0;
 		return { fadeOut, fadeIn, gap };
@@ -631,6 +656,13 @@ Module.register("MMM-BackgroundMedia", {
 
 	startItem (layer, item, token) {
 		const { signal } = layer.abort;
+		if (item.type === "video" && this.config.shortVideoStyle === "midpause" && typeof layer.video.requestVideoFrameCallback === "function") {
+			const length = Math.min(layer.video.duration || 0, this.config.maxVideoDuration > 0 ? this.config.maxVideoDuration / 1000 : Infinity);
+			if (length > 0 && length * 1000 < this.config.shortVideoLength) {
+				this.startMidPauseVideo(layer, item, length);
+				return;
+			}
+		}
 		if (item.type === "image") {
 			this.timerAnim = this.bar.animate([{ transform: "scaleX(0)" }, { transform: "scaleX(1)" }], { duration: this.config.imageDuration, fill: "forwards" });
 			this.timerAnim.onfinish = () => {
@@ -767,10 +799,131 @@ Module.register("MMM-BackgroundMedia", {
 		this.applyPlayState();
 	},
 
+	// Short video, "midpause" style: (speed up from a standstill,) ease to a stop at midPausePosition, hold for
+	// freezeDuration, ease back up, then fade out midPauseFadeOut before the end while still playing.
+	startMidPauseVideo (layer, item, length) {
+		const { signal } = layer.abort;
+		const video = layer.video;
+		const cfg = this.config;
+		const M = BackgroundMediaMotion;
+		const plan = M.midPausePlan(length, {
+			position: cfg.midPausePosition,
+			ease: Math.max(0, cfg.slowdownDuration) / 1000,
+			hold: Math.max(0, cfg.freezeDuration) / 1000,
+			fadeOut: Math.max(0, cfg.midPauseFadeOut) / 1000,
+			speedup: cfg.midPauseIntro === "speedup"
+		});
+		let frameSeconds = null; // measured from frame timestamps while at full speed
+		let lastT = null;
+		let afterHold = false;
+		let looping = false;
+		let preloaded = false;
+		// "Still on screen", rather than the show token, which preloading the next item bumps while this one plays on.
+		const alive = () => !signal.aborted && this.active === layer;
+		const frame = () => frameSeconds || 1 / 30;
+		// The frame it comes to rest on: the last one before the pause point.
+		const rest = () => plan.m - frame();
+		// Resolves when it's time to fade out (or the layer is stopped), so the preloaded next item swaps in on time.
+		let resolveSwap;
+		const swapReady = new Promise((resolve) => {
+			resolveSwap = resolve;
+		});
+		signal.addEventListener("abort", () => resolveSwap(), { once: true });
+		const preloadNext = () => {
+			if (preloaded) return;
+			preloaded = true;
+			this.advance("next", { swapWhen: () => swapReady, fadeOut: Math.max(0, cfg.midPauseFadeOut), keepOutgoingPlaying: true, keepTimer: true });
+		};
+
+		layer.midPause = true;
+		layer.midHolding = false;
+		const startBar = () => {
+			if (this.timerAnim) this.timerAnim.cancel();
+			// One clock for the whole item (eases and hold included), ending as the fade-out starts.
+			this.timerAnim = this.bar.animate([{ transform: "scaleX(0)" }, { transform: "scaleX(1)" }], { duration: plan.screen * 1000, fill: "forwards" });
+		};
+		const hold = () => {
+			layer.midHolding = true;
+			video.pause();
+			// An effect-free animation as a pause-aware timer.
+			layer.holdAnim = this.bar.animate([{ opacity: 1 }, { opacity: 1 }], { duration: plan.hold * 1000 });
+			layer.holdAnim.onfinish = () => {
+				if (!alive() || !layer.midHolding) return;
+				layer.midHolding = false;
+				layer.holdAnim = null;
+				afterHold = true;
+				video.playbackRate = M.accelRate(0, frame(), plan.D);
+				startLoop();
+				this.applyPlayState();
+			};
+			this.applyPlayState();
+		};
+		const onFrame = (now, meta) => {
+			if (!alive()) {
+				looping = false;
+				return;
+			}
+			const t = meta.mediaTime;
+			if (lastT !== null && t > lastT && video.playbackRate > 0.99) frameSeconds = Math.max(1 / 120, Math.min(frameSeconds || Infinity, t - lastT));
+			lastT = t;
+			if (!afterHold && t >= rest() - 0.002) {
+				looping = false;
+				hold();
+				return;
+			}
+			if (t >= plan.fadeStart - 1.5) preloadNext();
+			if (t >= plan.fadeStart - 0.002) {
+				looping = false;
+				resolveSwap();
+				return;
+			}
+			const rate = M.midPauseRate(plan, t, frame(), rest(), afterHold);
+			if (Math.abs(video.playbackRate - rate) > 0.005) video.playbackRate = rate;
+			video.requestVideoFrameCallback(onFrame);
+		};
+		const startLoop = () => {
+			if (looping) return;
+			looping = true;
+			lastT = null;
+			video.requestVideoFrameCallback(onFrame);
+		};
+		layer.restart = () => {
+			if (layer.holdAnim) layer.holdAnim.cancel();
+			layer.holdAnim = null;
+			layer.midHolding = false;
+			afterHold = false;
+			video.currentTime = 0;
+			video.playbackRate = plan.Din > 0 ? M.accelRate(0, frame(), plan.Din) : 1;
+			startBar();
+			startLoop();
+		};
+
+		video.addEventListener("ended", () => {
+			// Safety net if the fade point was missed.
+			preloadNext();
+			resolveSwap();
+		}, { signal });
+		video.addEventListener("error", () => {
+			if (!alive()) return;
+			Log.warn(`[${this.name}] playback failed for ${item.name}`);
+			this.sendSocketNotification("BGM_PLAYBACK_ERROR", { id: item.id });
+			this.advance("next");
+		}, { signal });
+		if (cfg.fit === "contain-blur") {
+			layer.backdropTimer = setInterval(() => this.drawBackdrop(layer, video, video.videoWidth, video.videoHeight), 500);
+		}
+		video.playbackRate = plan.Din > 0 ? M.accelRate(0, frame(), plan.Din) : 1;
+		startBar();
+		startLoop();
+		this.applyPlayState();
+	},
+
 	// Stop an outgoing layer's playback and listeners; it stays visible while it fades out.
 	stopLayer (layer, keepPlaying = false) {
 		if (layer.abort) layer.abort.abort();
 		layer.abort = null;
+		if (layer.holdAnim) layer.holdAnim.cancel();
+		layer.holdAnim = null;
 		clearInterval(layer.backdropTimer);
 		if (layer.video && !keepPlaying) layer.video.pause();
 	},
@@ -795,6 +948,9 @@ Module.register("MMM-BackgroundMedia", {
 		layer.item = null;
 		layer.holding = false;
 		layer.starting = false;
+		layer.midPause = false;
+		layer.midHolding = false;
+		layer.restart = null;
 		// Never let a reused layer inherit an old fade's timing (or fade in after a stale delay).
 		layer.el.style.transitionDuration = "0ms";
 		layer.el.style.transitionDelay = "0ms";
