@@ -40,54 +40,199 @@ Minimal `config/config.js` entry:
 
 ### Options
 
+Every option is optional except `mediaPaths`, which you'll want to set. Durations are in milliseconds. A block with every option at its default value is [below the tables](#all-options-with-their-defaults).
+
+#### Library
+
 | Option | Default | Description |
 |---|---|---|
 | `mediaPaths` | `["modules/MMM-BackgroundMedia/media"]` | Folders (or single files) to play. Absolute, `~/…`, or relative to the MagicMirror folder. Mounted NAS shares work. |
 | `recursive` | `true` | Include subfolders. |
-| `excludePaths` | `["@eaDir", "#recycle", "#snapshot"]` | Folder names to skip. Hidden folders (`.something`) are always skipped. |
+| `excludePaths` | `["@eaDir", "#recycle", "#snapshot"]` | Folder names to skip. Hidden folders (`.something`, including `.deleted`) are always skipped. |
 | `extensions` | `"jpg,jpeg,png,mov,mp4,m4v,mpg,mpeg"` | File types to include. |
-| `rescanInterval` | `1800000` (30 min) | How often to look for new or removed files, in ms. `0` = only at startup. |
+| `rescanInterval` | `1800000` (30 min) | How often to look for new or removed files. `0` = only at startup. |
+
+#### Playback
+
+| Option | Default | Description |
+|---|---|---|
 | `order` | `"shuffle"` | `"shuffle"` (every item once before any repeats), `"name"` (natural sort by path), or `"date"` (capture date from EXIF / video metadata, falling back to file date). |
 | `sortDescending` | `false` | Reverse `name` / `date` order. |
-| `imageDuration` | `15000` | How long each photo shows, in ms. |
-| `maxVideoDuration` | `0` | Cut videos off after this many ms. `0` = play the whole video. |
-| `shortVideoLength` | `10000` | Videos shorter than this many ms count as "short" for the two options below. |
-| `shortVideoStyle` | `"ending"` | How short videos play. `"ending"`: they use `videoSlowdown` / `videoFreeze` below. `"midpause"`: they ease to a stop partway, hold, ease back up, and fade out just before the end. See [Mid-pause style](#mid-pause-style-for-short-videos). |
-| `midPauseIntro` | `"fade"` | `"midpause"` only. `"fade"`: fade in at normal speed. `"speedup"`: start frozen and ease up to normal speed as it fades in. |
-| `midPausePosition` | `0.5` | `"midpause"` only. Where to pause, as a fraction of the video. |
-| `midPauseFadeOut` | `250` | `"midpause"` only. ms before the end that the fade-out starts. It lasts exactly that long, so the video is fully faded at its last frame. |
-| `videoSlowdown` | `"short"` | Which videos ease to a stop at the end: `"off"`, `"short"`, or `"all"`. See [Video endings](#video-endings). |
-| `slowdownDuration` | `1000` | How long the slow-down takes on screen, in ms. |
-| `videoFreeze` | `"short"` | Which videos then hold their last frame: `"off"`, `"short"`, or `"all"`. |
-| `freezeDuration` | `3000` | How long the hold lasts, in ms. Pausing freezes it, and replay plays the clip again. The old name `shortVideoDelay` still works. |
-| `transitionDuration` | `1500` | Default length of both fades, in ms. `0` = hard cut. |
-| `transitionStyle` | `"crossfade"` | `"crossfade"`: the next item fades in while the current one fades out. `"black"`: the current item fades out to black, then the next one fades in. |
-| `fadeOutDuration` | `null` | How long the current item takes to fade out, in ms. `null` = `transitionDuration`. |
-| `fadeInDuration` | `null` | How long the next item takes to fade in, in ms. `null` = `transitionDuration`. |
-| `blackDuration` | `0` | With `transitionStyle: "black"`, how long to stay on black between the fade-out and the fade-in, in ms. |
+| `imageDuration` | `15000` | How long each photo shows. |
+| `maxVideoDuration` | `0` | Cut videos off after this long. `0` = play the whole video. |
 | `fit` | `"contain-blur"` | `"contain-blur"`: whole picture, empty space filled with a blurred copy. `"contain"`: whole picture, black bars. `"cover"`: fill the screen, crop edges. |
 | `position` | `"center"` | CSS `object-position` for the media, e.g. `"top"`. |
+
+#### Transitions
+
+| Option | Default | Description |
+|---|---|---|
+| `transitionStyle` | `"crossfade"` | `"crossfade"`: the next item fades in while the current one fades out. `"black"`: the current item fades out to black, then the next one fades in. See [Transitions](#transitions). |
+| `transitionDuration` | `1500` | Default length of both fades. `0` = hard cut. |
+| `fadeOutDuration` | `null` | How long the current item takes to fade out. `null` = `transitionDuration`. |
+| `fadeInDuration` | `null` | How long the next item takes to fade in. `null` = `transitionDuration`. |
+| `blackDuration` | `0` | With `transitionStyle: "black"`, how long to stay on black between the fade-out and the fade-in. |
+
+#### Video endings and short videos
+
+| Option | Default | Description |
+|---|---|---|
+| `shortVideoLength` | `10000` | Videos shorter than this count as "short" for the options below. |
+| `shortVideoStyle` | `"ending"` | How short videos play. `"ending"`: they use `videoSlowdown` / `videoFreeze`. `"midpause"`: they ease to a stop partway, hold, ease back up, and fade out just before the end. See [Mid-pause style](#mid-pause-style-for-short-videos). |
+| `videoSlowdown` | `"short"` | Which videos ease to a stop at the end: `"off"`, `"short"`, or `"all"`. See [Video endings](#video-endings). |
+| `slowdownDuration` | `1000` | How long the slow-down takes on screen. In `"midpause"` style, the length of each ease (speed-up intro, slow-down into the pause, speed-up after it). |
+| `videoFreeze` | `"short"` | Which videos then hold their last frame: `"off"`, `"short"`, or `"all"`. |
+| `freezeDuration` | `3000` | How long the hold lasts (the end freeze, or the `"midpause"` hold). Pausing extends it, and replay plays the clip again. The old name `shortVideoDelay` still works. |
+| `midPauseIntro` | `"fade"` | `"midpause"` only. `"fade"`: fade in at normal speed. `"speedup"`: start frozen and ease up to normal speed as it fades in. |
+| `midPausePosition` | `0.5` | `"midpause"` only. Where to pause, as a fraction of the video. |
+| `midPauseFadeOut` | `250` | `"midpause"` only. How long before the end the fade-out starts. It lasts exactly that long, so the video is fully faded at its last frame. |
+
+#### Overlays
+
+| Option | Default | Description |
+|---|---|---|
 | `showInfo` | `false` | Show the info overlay at startup. It can also be toggled with a key. |
 | `infoLocation` | `"bottomRight"` | `bottomRight`, `bottomLeft`, `topRight`, `topLeft`. |
 | `infoFields` | `["name", "date"]` | Any of `name`, `date`, `folder`. |
 | `dateFormat` | `{ dateStyle: "long" }` | [`Intl.DateTimeFormat` options](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Intl/DateTimeFormat/DateTimeFormat#options). Uses the mirror's `language`. |
-| `showProgressBar` | `true` | Thin bar at the bottom showing time left on the current item. For videos it covers the slow-down and freeze too, so it reaches the end just as the next item starts. |
-| `showIndicator` | `true` | Briefly show an icon (⏭ ⏮ ⏸ ▶ ↻) when a command is received. |
-| `showGradient` | `true` | Darken the edges so other modules stay readable. |
+| `showProgressBar` | `true` | Thin bar at the bottom showing time left on the current item. For videos it covers any slow-down, freeze or mid-pause too, so it reaches the end just as the next item starts. |
+| `showIndicator` | `true` | Briefly show an icon (⏭ ⏮ ⏸ ▶ ↻) when a command is received. Confirmation prompts (press twice, deleted) show either way. |
 | `showConversionStatus` | `true` | While videos are being converted, show a small card with the file name, "Converting 2 of 5", and percent done. |
 | `conversionStatusLocation` | `"bottomLeft"` | `bottomLeft`, `bottomRight`, `topLeft`, `topRight`. |
-| `gradientDirection` | `"vertical"` | `vertical`, `horizontal`, `both`, or `radial`. Stops are set with `gradient`, `horizontalGradient` and `radialGradient`; the defaults match MMM-BackgroundSlideshow. |
+| `showGradient` | `true` | Darken the edges so other modules stay readable. |
+| `gradientDirection` | `"vertical"` | `vertical` (uses `gradient`), `horizontal` (`horizontalGradient`), `both` (`gradient` and `horizontalGradient`), or `radial` (`radialGradient`). |
+| `gradient` | `["rgba(0, 0, 0, 0.75) 0%", "rgba(0, 0, 0, 0) 40%", "rgba(0, 0, 0, 0) 80%", "rgba(0, 0, 0, 0.75) 100%"]` | Top-to-bottom colour stops. Defaults match MMM-BackgroundSlideshow. |
+| `horizontalGradient` | same as `gradient` | Left-to-right colour stops. |
+| `radialGradient` | `["rgba(0, 0, 0, 0) 0%", "rgba(0, 0, 0, 0) 75%", "rgba(0, 0, 0, 0.25) 100%"]` | Centre-outwards colour stops. |
+
+#### Folders and deleting
+
+| Option | Default | Description |
+|---|---|---|
 | `folderDepth` | `1` | How many subfolder levels the folder picker lists below each media folder. |
 | `rememberFolderSelection` | `true` | Keep the folder selection across restarts. |
+| `menuTimeout` | `30000` | Close the folder picker after this long without a key press. |
 | `deletedFolder` | `null` | Where `d` moves files. By default, a hidden `.deleted` folder inside the media folder each file came from (same drive, so even big videos move instantly). Set a path to use one folder instead; files keep `<media folder name>/<subfolders>` under it. |
-| `deletePresses` / `deletePressWindow` | `3` / `1000` | How many presses of `d`, within how many ms, move the current file to the deleted folder. |
-| `menuTimeout` | `30000` | Close the folder picker after this many ms without a key press. |
-| `device` | `"auto"` | `"auto"` (read the Pi model), `"rpi4"`, `"rpi5"`, or `"generic"`. See below. |
-| `videoProfile` | `{}` | Override profile values, e.g. `{ maxFps: 25, bitrate: "4M" }`. |
-| `transcode` | `true` | Convert unplayable videos. If `false`, they're skipped. |
-| `cacheDir` | `<module>/cache` | Where converted videos and the saved folder selection go. A USB drive is a good choice for large libraries. |
-| `ffmpegPath` / `ffprobePath` | `"ffmpeg"` / `"ffprobe"` | Binaries to use. |
-| `keyBindings` | see below | Key mapping. You can override a single action without repeating the rest. |
+| `deletePresses` | `3` | How many presses of `d`... |
+| `deletePressWindow` | `1000` | ...within how long, move the current file to the deleted folder. |
+
+#### Video conversion
+
+| Option | Default | Description |
+|---|---|---|
+| `device` | `"auto"` | `"auto"` (read the Pi model), `"rpi4"`, `"rpi5"`, or `"generic"`. Sets which videos play as-is and how others are converted. See [Device profiles](#device-profiles). |
+| `videoProfile` | `{}` | Override profile values, e.g. `{ maxShortSide: 720, maxFps: 25, bitrate: "4M" }`. |
+| `transcode` | `true` | Convert videos the mirror can't play smoothly. If `false`, they're skipped. |
+| `cacheDir` | `null` (`<module>/cache`) | Where converted videos and the saved folder selection go. A USB drive is a good choice for large libraries. |
+| `ffmpegPath` | `"ffmpeg"` | ffmpeg binary. |
+| `ffprobePath` | `"ffprobe"` | ffprobe binary. |
+
+#### Keys
+
+| Option | Default | Description |
+|---|---|---|
+| `keyBindings.enabled` | `true` | Respond to MMM-KeyBindings key presses. Set `false` to drive everything from MMM-KeyBindings `actions` instead (see [below](#drive-everything-from-mmm-keybindings-actions)). |
+| `keyBindings.mode` | `"DEFAULT"` | Only react while MMM-KeyBindings is in this mode. |
+| `keyBindings.menuMode` | `"BACKGROUNDMEDIA_MENU"` | Mode MMM-KeyBindings is switched to while the folder picker is open. |
+| `keyBindings.map` | see [Full key list](#full-key-list) | Keys for each action. Override one action without repeating the rest, e.g. `keyBindings: { map: { next: ["n"] } }`. |
+| `keyBindings.menuMap` | see [Full key list](#full-key-list) | Keys inside the folder picker: `up`, `down`, `select`, `close`. |
+
+#### All options with their defaults
+
+<details>
+<summary>Every option at its default value, ready to copy into <code>config.js</code></summary>
+
+```js
+{
+	module: "MMM-BackgroundMedia",
+	position: "fullscreen_below",
+	config: {
+		// Library
+		mediaPaths: ["modules/MMM-BackgroundMedia/media"],
+		recursive: true,
+		excludePaths: ["@eaDir", "#recycle", "#snapshot"],
+		extensions: "jpg,jpeg,png,mov,mp4,m4v,mpg,mpeg",
+		rescanInterval: 1800000, // 30 min
+		folderDepth: 1,
+		rememberFolderSelection: true,
+		deletedFolder: null, // default: a hidden ".deleted" folder in each media folder
+		deletePresses: 3, // press "d" this many times...
+		deletePressWindow: 1000, // ...within this many ms to move the current file to the deleted folder
+
+		// Playback
+		order: "shuffle", // "shuffle" | "name" | "date"
+		sortDescending: false,
+		imageDuration: 15000,
+		maxVideoDuration: 0, // ms; 0 = play whole video
+		shortVideoLength: 10000, // ms; videos shorter than this count as "short" below
+		shortVideoStyle: "ending", // "ending": short videos use videoSlowdown/videoFreeze below | "midpause": see midPause* options
+		midPauseIntro: "fade", // "midpause": "fade" in at normal speed | "speedup" from a standstill
+		midPausePosition: 0.5, // "midpause": ease to a stop here (fraction of the video), hold freezeDuration, ease back up
+		midPauseFadeOut: 250, // "midpause": ms before the end that the fade-out starts (it ends at the last frame)
+		videoSlowdown: "short", // "off" | "short" | "all": ease to a stop at the end
+		slowdownDuration: 1000, // ms the slow-down takes on screen
+		videoFreeze: "short", // "off" | "short" | "all": then hold the last frame...
+		freezeDuration: 3000, // ...for this long (ms) before moving on
+		transitionDuration: 1500, // ms; default length of both fades. 0 = hard cut
+		transitionStyle: "crossfade", // "crossfade" | "black": fade out to black, then fade the next item in
+		fadeOutDuration: null, // ms; null = transitionDuration
+		fadeInDuration: null, // ms; null = transitionDuration
+		blackDuration: 0, // "black" style: ms to stay on black between fade-out and fade-in
+		fit: "contain-blur", // "contain-blur" | "contain" | "cover"
+		position: "center",
+
+		// Overlays
+		showInfo: false,
+		infoLocation: "bottomRight", // bottomRight | bottomLeft | topRight | topLeft
+		infoFields: ["name", "date"], // name | date | folder
+		dateFormat: { dateStyle: "long" }, // Intl.DateTimeFormat options
+		showProgressBar: true,
+		showIndicator: true,
+		showGradient: true,
+		showConversionStatus: true,
+		conversionStatusLocation: "bottomLeft", // bottomRight | bottomLeft | topRight | topLeft
+		gradientDirection: "vertical", // vertical | horizontal | both | radial
+		gradient: ["rgba(0, 0, 0, 0.75) 0%", "rgba(0, 0, 0, 0) 40%", "rgba(0, 0, 0, 0) 80%", "rgba(0, 0, 0, 0.75) 100%"],
+		horizontalGradient: ["rgba(0, 0, 0, 0.75) 0%", "rgba(0, 0, 0, 0) 40%", "rgba(0, 0, 0, 0) 80%", "rgba(0, 0, 0, 0.75) 100%"],
+		radialGradient: ["rgba(0, 0, 0, 0) 0%", "rgba(0, 0, 0, 0) 75%", "rgba(0, 0, 0, 0.25) 100%"],
+		menuTimeout: 30000,
+
+		// Video / device
+		device: "auto", // "auto" | "rpi4" | "rpi5" | "generic"
+		videoProfile: {}, // override profile values, e.g. { maxFps: 25 }
+		transcode: true,
+		cacheDir: null, // default: <module>/cache
+		ffmpegPath: "ffmpeg",
+		ffprobePath: "ffprobe",
+
+		// MMM-KeyBindings
+		keyBindings: {
+			enabled: true,
+			mode: "DEFAULT",
+			menuMode: "BACKGROUNDMEDIA_MENU",
+			map: {
+				next: ["ArrowRight", "MediaNextTrack"],
+				previous: ["ArrowLeft", "MediaPreviousTrack"],
+				playPause: ["Enter", "MediaPlayPause"],
+				replay: ["ArrowUp"],
+				toggleInfo: ["ArrowDown", "i"],
+				folderMenu: ["Menu"],
+				clearVideoCache: ["c"], // re-convert the current video (press twice)
+				clearAllCache: ["C"], // Shift+C: delete every converted video (press twice)
+				deleteFile: ["d"] // move the current file to the deleted folder (press 3× within 1 s)
+			},
+			menuMap: {
+				up: ["ArrowUp"],
+				down: ["ArrowDown"],
+				select: ["Enter", "MediaPlayPause"],
+				close: ["Return", "Menu"] // MMM-KeyBindings maps Escape/Backspace to "Return"
+			}
+		}
+	}
+},
+```
+
+</details>
 
 ### Device profiles
 
